@@ -16,8 +16,20 @@ st.set_page_config(page_title="大众点评评论优缺点总结", page_icon="�
 st.title("🍽️ 大众点评评论优缺点总结系统")
 st.markdown("基于情感分类与属性抽取的餐饮评论分析工具")
 
-# 中文字体（Streamlit Cloud 上 SimHei 可能不存在，做兜底）
-plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'DejaVu Sans']
+import os
+import urllib.request
+
+# 下载中文字体（如果本地没有）
+FONT_PATH = "SimHei.ttf"
+if not os.path.exists(FONT_PATH):
+    urllib.request.urlretrieve(
+        "https://github.com/StellarCN/scp_zh/raw/master/fonts/SimHei.ttf",
+        FONT_PATH
+    )
+
+from matplotlib import font_manager
+font_manager.fontManager.addfont(FONT_PATH)
+plt.rcParams['font.sans-serif'] = ['SimHei']
 plt.rcParams['axes.unicode_minus'] = False
 
 # ========== 1. 加载数据集（带缓存） ==========
