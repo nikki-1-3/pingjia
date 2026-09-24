@@ -138,6 +138,10 @@ X_train, X_test, y_train, y_test = train_test_split(
     df['clean'], df['label'], test_size=0.3, random_state=42, stratify=df['label']
 )
 
+# 关键修复：把 y_train / y_test 转成 numpy 数组，避免后面稀疏矩阵索引报错
+y_train = np.asarray(y_train)
+y_test = np.asarray(y_test)
+
 vectorizer = TfidfVectorizer(max_features=5000)
 X_train_vec = vectorizer.fit_transform(X_train)
 X_test_vec = vectorizer.transform(X_test)
@@ -152,7 +156,7 @@ n_pos = X_train_pos.shape[0]
 n_neg = X_train_neg.shape[0]
 
 if n_neg > 0 and n_pos > n_neg:
-    ratio = int(np.ceil(n_pos / n_neg * 1.2))   # 差评复制到好评的 1.2 倍，稍微偏一点
+    ratio = int(np.ceil(n_pos / n_neg * 1.2))   # 差评复制到好评的 1.2 倍
     X_train_neg_up = vstack([X_train_neg] * ratio)
     y_train_neg_up = np.tile(y_train_neg, ratio)
     X_train_vec = vstack([X_train_pos, X_train_neg_up])
