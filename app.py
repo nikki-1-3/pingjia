@@ -96,6 +96,7 @@ with st.expander("查看预处理示例"):
 # ========== 4. 情感分类 ==========
 st.header("一、情感分类")
 
+# ========== 划分训练 / 测试集 ==========
 X_train, X_test, y_train, y_test = train_test_split(
     df['clean'], df['label'], test_size=0.3, random_state=42, stratify=df['label']
 )
@@ -108,39 +109,35 @@ clf = MultinomialNB()
 clf.fit(X_train_vec, y_train)
 y_pred = clf.predict(X_test_vec)
 
-report = classification_report(y_test, y_pred, target_names=['差评','好评'], zero_division=0)
+report = classification_report(y_test, y_pred, target_names=['差评', '好评'], zero_division=0)
 
-# 文字和图片同行
 from sklearn.metrics import accuracy_score
 
-real_pos = int((y_test == 1).sum())
-real_neg = int((y_test == 0).sum())
-correct_total = int((y_test == y_pred).sum())
-wrong_total = len(y_test) - correct_total
-acc = accuracy_score(y_test, y_pred)
-
 # ========================================================
-# 板块 A：评价好坏（左文字 + 右图，同一行）
+# 板块 A：评价好坏 —— 用全部数据，只看评论本身
 # ========================================================
 st.subheader("A. 评价好坏：数据构成")
+
+real_pos = int((df['label'] == 1).sum())
+real_neg = int((df['label'] == 0).sum())
 
 col_text1, col_img1 = st.columns([1, 2])
 
 with col_text1:
     st.markdown("**这一块看的是：评论本身是好还是差**")
     st.markdown(
-        f"测试集共 **{len(y_test)}** 条评论：\n\n"
+        f"当前使用的**全部数据**共 **{len(df)}** 条评论：\n\n"
         f"- 好评：**{real_pos}** 条\n"
         f"- 差评：**{real_neg}** 条"
     )
-    st.caption("右图只显示好评和差评各有多少条，不涉及系统判断对错。")
+    st.caption("右图统计的是全部数据，不涉及系统判断对错，也不是测试集。")
 
 with col_img1:
     fig1, ax1 = plt.subplots(figsize=(5, 3))
     bars = ax1.bar(['好评', '差评'], [real_pos, real_neg],
                    color=['#FF6B35', '#FFB088'], width=0.5)
     ax1.set_ylabel('评论条数', fontsize=9)
-    ax1.set_title('评价好坏：各有多少条', fontsize=11)
+    ax1.set_title(f'评价好坏：全部 {len(df)} 条中各有多少', fontsize=11)
     for b in bars:
         h = b.get_height()
         ax1.annotate(f'{int(h)}', (b.get_x() + b.get_width()/2, h),
@@ -153,16 +150,20 @@ with col_img1:
 st.markdown("---")
 
 # ========================================================
-# 板块 B：判断准确度（左文字 + 右图，同一行）
+# 板块 B：判断准确度 —— 用测试集，只看整体准不准
 # ========================================================
 st.subheader("B. 判断准确度：整体表现")
+
+correct_total = int((y_test == y_pred).sum())
+wrong_total = len(y_test) - correct_total
+acc = accuracy_score(y_test, y_pred)
 
 col_text2, col_img2 = st.columns([1, 2])
 
 with col_text2:
     st.markdown("**这一块看的是：系统整体判得准不准**")
     st.markdown(
-        f"系统判断了 **{len(y_test)}** 条评论：\n\n"
+        f"从全部数据中抽出 **{len(y_test)}** 条（30%）做检验：\n\n"
         f"- 判对：**{correct_total}** 条\n"
         f"- 判错：**{wrong_total}** 条\n"
         f"- 准确度：**{acc:.1%}**"
@@ -179,7 +180,7 @@ with col_img2:
     bars2 = ax2.bar(['判对', '判错'], [correct_total, wrong_total],
                     color=['#E85D2F', '#FFD9C2'], width=0.5)
     ax2.set_ylabel('评论条数', fontsize=9)
-    ax2.set_title('判断准确度：整体判对 / 判错', fontsize=11)
+    ax2.set_title(f'判断准确度：{len(y_test)} 条测试中的对错', fontsize=11)
     for b in bars2:
         h = b.get_height()
         ax2.annotate(f'{int(h)}', (b.get_x() + b.get_width()/2, h),
