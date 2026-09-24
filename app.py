@@ -3,6 +3,7 @@ import os
 import jieba
 import pandas as pd
 import numpy as np
+from scipy.sparse import vstack
 import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
@@ -141,16 +142,22 @@ vectorizer = TfidfVectorizer(max_features=5000)
 X_train_vec = vectorizer.fit_transform(X_train)
 X_test_vec = vectorizer.transform(X_test)
 
-# ===== 过采样：用 SMOTE 合成新差评样本 =====
-try:
-    from imblearn.over_sampling import SMOTE
-    smote = SMOTE(random_state=42, k_neighbors=3)
-    X_train_vec, y_train = smote.fit_resample(X_train_vec, y_train)
-    st.sidebar.success("✅ SMOTE 过采样已启用")
-except ImportError:
-    st.sidebar.warning("⚠️ 未安装 imblearn，未启用过采样")
-except Exception as e:
-    st.sidebar.warning(f"⚠️ SMOTE 失败：{e}")
+# ===== 手动过采样：把训练集里的差评复制到和好评一样多（不需要 imblearn） =====
+X_train_pos = X_train_vec[y_train == 1]
+X_train_neg = X_train_vec[y_train == 0]
+y_train_pos = y_train[y_train == 1]
+y_train_neg = y_train[y_train == 0]
+
+n_pos = X_train_pos.shape[0]
+n_neg = X_train_neg.shape[0]
+
+if n_neg > 0 and n_pos > n_neg:
+    ratio = int(np.ceil(n_pos / n_neg * 1.2))   # 差评复制到好评的 1.2 倍，稍微偏一点
+    X_train_neg_up = vstack([X_train_neg] * ratio)
+    y_train_neg_up = np.tile(y_train_neg, ratio)
+    X_train_vec = vstack([X_train_pos, X_train_neg_up])
+    y_train = np.concatenate([y_train_pos, y_train_neg_up])
+    st.sidebar.success(f"✅ 过采样：差评 {n_neg} → {X_train_neg_up.shape[0]} 条")
 
 # 训练
 clf = LogisticRegression(class_weight='balanced', max_iter=1000, solver='liblinear')
