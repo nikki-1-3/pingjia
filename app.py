@@ -32,9 +32,7 @@ st.markdown("基于情感分类与属性抽取的餐饮评论分析工具")
 
 # ========== 中文字体 ==========
 FONT_CANDIDATES = [
-    "Ubuntu_18.04_SimHei.ttf",
-    "simhei.ttf",
-    "SimHei.ttf",
+    "Ubuntu_18.04_SimHei.ttf", "simhei.ttf", "SimHei.ttf",
     "/mount/src/pingjia/Ubuntu_18.04_SimHei.ttf",
     "/mount/src/pingjia/simhei.ttf",
     "/mount/src/pingjia/SimHei.ttf",
@@ -145,7 +143,9 @@ vectorizer = TfidfVectorizer(max_features=5000)
 X_train_vec = vectorizer.fit_transform(X_train)
 X_test_vec = vectorizer.transform(X_test)
 
-# ===== 手动过采样：差评复制到好评的 5 倍 =====
+# ===== 关键改动：训练集里"下采样"好评，让好评差评比例接近 =====
+# 现在训练集里好评 ~3300、差评 ~210，比例严重失衡。
+# 把好评也下采样到 3 倍差评数量（即 ~630 条），让模型学得更平衡。
 X_train_pos = X_train_vec[y_train == 1]
 X_train_neg = X_train_vec[y_train == 0]
 y_train_pos = y_train[y_train == 1]
@@ -154,44 +154,58 @@ y_train_neg = y_train[y_train == 0]
 n_pos = X_train_pos.shape[0]
 n_neg = X_train_neg.shape[0]
 
+# 好评下采样到 3 倍差评
+rng = np.random.RandomState(42)
+if n_pos > n_neg * 3:
+    pos_idx = rng.choice(n_pos, size=n_neg * 3, replace=False)
+    X_train_pos = X_train_pos[pos_idx]
+    y_train_pos = y_train_pos[pos_idx]
+    n_pos = X_train_pos.shape[0]
+
+# 差评过采样到和好评同量
 if n_neg > 0 and n_pos > n_neg:
-    ratio = int(np.ceil(n_pos / n_neg * 5.0))   # 差评复制到好评的 5 倍
+    ratio = int(np.ceil(n_pos / n_neg))
     X_train_neg_up = vstack([X_train_neg] * ratio)
     y_train_neg_up = np.tile(y_train_neg, ratio)
-    X_train_vec = vstack([X_train_pos, X_train_neg_up])
-    y_train = np.concatenate([y_train_pos, y_train_neg_up])
-    st.sidebar.success(f"✅ 过采样：差评 {n_neg} → {X_train_neg_up.shape[0]} 条（{ratio}倍）")
 else:
-    st.sidebar.warning(f"⚠️ 过采样未启用：n_pos={n_pos}, n_neg={n_neg}")
+    X_train_neg_up = X_train_neg
+    y_train_neg_up = y_train_neg
 
-# 训练：差评权重 20 倍
+X_train_vec = vstack([X_train_pos, X_train_neg_up])
+y_train = np.concatenate([y_train_pos, y_train_neg_up])
+
+st.sidebar.success(
+    f"✅ 训练集：好评下采样到 {X_train_pos.shape[0]} 条，"
+    f"差评过采样到 {X_train_neg_up.shape[0]} 条"
+)
+
+# 训练
 clf = LogisticRegression(
-    class_weight={0: 20.0, 1: 1.0},
+    class_weight={0: 5.0, 1: 1.0},
     max_iter=1000,
     solver='liblinear'
 )
 clf.fit(X_train_vec, y_train)
 
-# ===== 两层兜底 =====
-# 第 1 层：模型概率阈值极低（0.10）
+# ===== 双层兜底 =====
+# 第 1 层：模型概率阈值极低（0.05）
 proba = clf.predict_proba(X_test_vec)
-THRESHOLD = 0.10
+THRESHOLD = 0.05
 y_pred = (proba[:, 1] >= THRESHOLD).astype(int)
 
-# 第 2 层：硬规则，命中强差评词直接判差评
+# 第 2 层：硬规则，命中强差评或中性偏负词，直接判差评
 STRONG_NEG = [
-    # 口味
+    # 强差评
     '难吃', '不好吃', '太咸', '太淡', '太辣', '太甜', '太油', '太腻', '腥', '异味',
     '不新鲜', '变质', '馊', '难以下咽',
-    # 环境
     '脏', '太吵', '很吵', '环境差', '不卫生', '乱',
-    # 服务
     '服务差', '态度差', '态度不好', '不理人', '冷漠', '催了', '等了很久', '等太久',
-    # 价格
     '太贵', '不值', '坑', '宰客', '贵死', '性价比低',
-    # 综合/情绪
-    '失望', '差评', '再也不来', '不推荐', '踩雷', '拉黑', '恶心', '糟糕', '一般般',
+    '失望', '差评', '再也不来', '不推荐', '踩雷', '拉黑', '恶心', '糟糕',
     '不会再', '很差', '不行', '烂', '别来', '避雷',
+    # 中性偏负
+    '一般', '还行吧', '不太', '有点', '稍微', '勉强', '凑合', '一般般',
+    '没什么', '没有特别', '不算', '不太行', '就那么', '普通',
 ]
 X_test_list = list(X_test)
 hard_hits = 0
@@ -343,11 +357,7 @@ with st.expander("📊 点击展开查看混淆矩阵（判对 / 判错 的四�
         )
         st.markdown("---")
         if fp > tn and fp > 20:
-            st.error(
-                f"⚠️ **漏抓的差评比抓到的还多**\n\n"
-                f"有 **{fp}** 条真实差评被判成了好评，"
-                f"而抓到的只有 **{tn}** 条。"
-            )
+            st.error(f"⚠️ 有 **{fp}** 条真实差评被判成了好评，漏抓的差评比抓到的还多。")
         elif fp > 20:
             st.warning(f"⚠️ 有 **{fp}** 条真实差评被漏掉了，差评召回率还能再提高。")
         else:
