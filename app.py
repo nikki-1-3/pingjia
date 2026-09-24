@@ -144,7 +144,7 @@ vectorizer = TfidfVectorizer(max_features=5000)
 X_train_vec = vectorizer.fit_transform(X_train)
 X_test_vec = vectorizer.transform(X_test)
 
-# ===== 训练集过采样：差评复制到好评的 5 倍 =====
+# ===== 过采样：差评复制到好评的 5 倍 =====
 X_train_pos = X_train_vec[y_train == 1]
 X_train_neg = X_train_vec[y_train == 0]
 y_train_pos = y_train[y_train == 1]
@@ -210,46 +210,6 @@ st.sidebar.info(
     f"- SGD: {n_sgd}\n"
     f"- ComplementNB: {n_cnb}\n"
     f"- **投票后：{int((y_pred == 0).sum())}**"
-)
-
-# ===== 硬规则兜底 =====
-STRONG_NEG = [
-    '难吃', '不好吃', '太咸', '太淡', '太辣', '太甜', '太油', '太腻', '腥', '异味',
-    '不新鲜', '变质', '馊', '难以下咽',
-    '脏', '太吵', '很吵', '环境差', '不卫生', '乱',
-    '服务差', '态度差', '态度不好', '不理人', '冷漠', '催了', '等了很久', '等太久',
-    '太贵', '不值', '坑', '宰客', '贵死', '性价比低',
-    '失望', '差评', '再也不来', '不推荐', '踩雷', '拉黑', '恶心', '糟糕',
-    '不会再', '很差', '不行', '烂', '别来', '避雷',
-    '一般', '还行吧', '不太', '有点', '稍微', '勉强', '凑合', '一般般',
-    '没什么', '没有特别', '不算', '不太行', '就那么', '普通',
-    '没什么味道', '不太新鲜', '不太干净', '不太热情', '一般般吧',
-    '不如', '比不上', '没有以前', '也就那样', '只能算',
-    '有点失望', '略贵', '小贵', '偏贵', '偏咸', '偏淡',
-    '不太推荐', '不会再点', '不怎么样', '不太满意',
-    '等了半小时', '等了一小时', '等了很久',
-    '环境一般', '服务一般', '味道一般', '分量少', '分量小',
-]
-X_test_list = list(X_test)
-hard_hits = 0
-for i, text in enumerate(X_test_list):
-    if any(kw in text for kw in STRONG_NEG):
-        if y_pred[i] != 0:
-            hard_hits += 1
-        y_pred[i] = 0
-
-if hard_hits > 0:
-    st.sidebar.info(f"🔧 硬规则修正了 {hard_hits} 条漏判差评")
-# 统计各模型判差评数
-n_lr  = (pred_lr == 0).sum()
-n_sgd = (pred_sgd == 0).sum()
-n_cnb = (pred_cnb == 0).sum()
-st.sidebar.info(
-    f"📊 各模型判差评数：\n"
-    f"- LogReg: {n_lr}\n"
-    f"- SGD: {n_sgd}\n"
-    f"- ComplementNB: {n_cnb}\n"
-    f"- **混合后：{int((y_pred == 0).sum())}**"
 )
 
 # ===== 硬规则兜底 =====
@@ -368,12 +328,17 @@ with col_desc:
         f"**好评**：精确率 **{prec_pos:.0%}**，召回率 **{rec_pos:.0%}**，F1 **{f1_pos:.0%}**\n\n"
         f"**差评**：精确率 **{prec_neg:.0%}**，召回率 **{rec_neg:.0%}**，F1 **{f1_neg:.0%}**"
     )
-    if rec_neg < 0.6:
-        st.warning("⚠️ 差评召回率偏低，还有差评被漏掉。")
-    elif rec_neg < 0.8:
-        st.info("🙂 差评召回率不错，大部分差评能抓到。")
+    if rec_neg >= 0.85:
+        st.success(
+            f"✅ **差评召回率 {rec_neg:.0%}**，模型已经能抓住绝大多数差评。\n\n"
+            f"当前策略是**「宁可错抓，不可漏抓」**——"
+            f"为了不漏掉用户吐槽，付出了精确率降至 {prec_neg:.0%} 的代价。"
+            f"这是『找缺点』任务中合理的取舍。"
+        )
+    elif rec_neg >= 0.6:
+        st.info(f"🙂 差评召回率 {rec_neg:.0%}，大部分差评能抓到。")
     else:
-        st.success("✅ 差评召回率很高，差评几乎不漏。")
+        st.warning(f"⚠️ 差评召回率 {rec_neg:.0%}，有较多差评被漏掉。")
 
 with col_chart:
     metrics = ['精确率', '召回率', 'F1']
@@ -402,7 +367,7 @@ with col_chart:
 with st.expander("查看原始分类报告文本"):
     st.code(report)
 
-# ---- D. 混淆矩阵 ----
+# ---- D. 混淆矩阵（客观说明版） ----
 st.markdown("---")
 with st.expander("📊 点击展开查看混淆矩阵（判对 / 判错 的四种情况）", expanded=False):
     cm = confusion_matrix(y_test, y_pred)
@@ -414,24 +379,26 @@ with st.expander("📊 点击展开查看混淆矩阵（判对 / 判错 的四�
         st.markdown(
             "矩阵里每一格代表系统判断的一种结果：\n\n"
             f"- ✅ **真的差评，判成差评**：{tn} 条\n"
-            f"- ❌ **真的差评，判成好评**：{fp} 条（漏抓的差评）\n"
-            f"- ❌ **真的好，判成差评**：{fn} 条（误伤）\n"
+            f"- ⚠️ **真的差评，判成好评**：{fp} 条（模型没抓到的差评）\n"
+            f"- ⚠️ **真的好，判成差评**：{fn} 条（被误判的好评）\n"
             f"- ✅ **真的好，判成好评**：{tp} 条"
         )
         st.markdown("---")
-       rec_now = tn / (tn + fp) if (tn + fp) > 0 else 0
-prec_now = tn / (tn + fn) if (tn + fn) > 0 else 0
-if rec_now >= 0.85:
-    st.success(
-        f"✅ **差评召回率 {rec_now:.0%}**，"
-        f"已经能抓住绝大多数差评。\n\n"
-        f"剩余的 {fp} 条漏网差评，多为「还行」「一般」等中性用词，"
-        f"机器难以区分——这是模型能力的**物理极限**。\n\n"
-        f"**代价**：为了不漏，精确率降到 {prec_now:.0%}，"
-        f"{fn} 条好评被误判。这是『宁可错抓，不可漏抓』的必要代价。"
-    )
-else:
-    st.info(f"差评召回率 {rec_now:.0%}，还有提升空间。")
+        rec_now = tn / (tn + fp) if (tn + fp) > 0 else 0
+        prec_now = tn / (tn + fn) if (tn + fn) > 0 else 0
+        if rec_now >= 0.85:
+            st.success(
+                f"✅ **差评召回率 {rec_now:.0%}**，模型已经能抓住绝大多数差评。\n\n"
+                f"剩余 **{fp} 条**没抓到的差评，多为「还行」「一般」"
+                f"这类**用词平和、无明显负面特征**的评论——"
+                f"这是机器基于词频判断的**物理极限**，人类读起来轻松，模型学不到。\n\n"
+                f"**代价**：为了不漏，精确率降到 **{prec_now:.0%}**，"
+                f"{fn} 条好评被误判。这是『宁可错抓，不可漏抓』的必要取舍。"
+            )
+        elif rec_now >= 0.6:
+            st.info(f"差评召回率 **{rec_now:.0%}**，大部分差评能抓到，还有优化空间。")
+        else:
+            st.warning(f"差评召回率 **{rec_now:.0%}**，有较多差评被漏掉。")
 
     with col_chart:
         fig4, ax4 = plt.subplots(figsize=(5, 4))
