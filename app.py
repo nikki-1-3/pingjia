@@ -138,7 +138,6 @@ X_train, X_test, y_train, y_test = train_test_split(
     df['clean'], df['label'], test_size=0.3, random_state=42, stratify=df['label']
 )
 
-# 关键修复：把 y_train / y_test 转成 numpy 数组
 y_train = np.asarray(y_train)
 y_test = np.asarray(y_test)
 
@@ -146,7 +145,7 @@ vectorizer = TfidfVectorizer(max_features=5000)
 X_train_vec = vectorizer.fit_transform(X_train)
 X_test_vec = vectorizer.transform(X_test)
 
-# ===== 手动过采样：把训练集里的差评复制到好评的 2 倍 =====
+# ===== 手动过采样：差评复制到好评的 3 倍 =====
 X_train_pos = X_train_vec[y_train == 1]
 X_train_neg = X_train_vec[y_train == 0]
 y_train_pos = y_train[y_train == 1]
@@ -156,7 +155,7 @@ n_pos = X_train_pos.shape[0]
 n_neg = X_train_neg.shape[0]
 
 if n_neg > 0 and n_pos > n_neg:
-    ratio = int(np.ceil(n_pos / n_neg * 2.0))   # 差评复制到好评的 2 倍
+    ratio = int(np.ceil(n_pos / n_neg * 3.0))   # 差评复制到好评的 3 倍
     X_train_neg_up = vstack([X_train_neg] * ratio)
     y_train_neg_up = np.tile(y_train_neg, ratio)
     X_train_vec = vstack([X_train_pos, X_train_neg_up])
@@ -165,18 +164,33 @@ if n_neg > 0 and n_pos > n_neg:
 else:
     st.sidebar.warning(f"⚠️ 过采样未启用：n_pos={n_pos}, n_neg={n_neg}")
 
-# 训练：手动给差评加 5 倍权重
+# 训练：差评权重加到 10 倍
 clf = LogisticRegression(
-    class_weight={0: 5.0, 1: 1.0},   # 差评权重 5 倍
+    class_weight={0: 10.0, 1: 1.0},
     max_iter=1000,
     solver='liblinear'
 )
 clf.fit(X_train_vec, y_train)
 
-# ===== 阈值降到 0.25，更倾向判差评 =====
+# ===== 阈值降到 0.15，非常倾向判差评 =====
 proba = clf.predict_proba(X_test_vec)
-THRESHOLD = 0.25
+THRESHOLD = 0.15
 y_pred = (proba[:, 1] >= THRESHOLD).astype(int)
+
+# ===== 硬规则补充：出现强差评关键词，直接判差评 =====
+STRONG_NEG = ['难吃', '太贵', '服务差', '态度差', '脏', '不新鲜',
+              '等太久', '失望', '坑', '差评', '再也不来', '拉黑',
+              '恶心', '难以下咽', '不推荐', '踩雷']
+X_test_list = list(X_test)
+hard_hits = 0
+for i, text in enumerate(X_test_list):
+    if any(kw in text for kw in STRONG_NEG):
+        if y_pred[i] != 0:
+            hard_hits += 1
+        y_pred[i] = 0
+
+if hard_hits > 0:
+    st.sidebar.info(f"🔧 硬规则修正了 {hard_hits} 条漏判差评")
 
 report = classification_report(y_test, y_pred, target_names=['差评', '好评'], zero_division=0)
 
