@@ -9,7 +9,6 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, accuracy_score, precision_score, recall_score, f1_score
 from sklearn.linear_model import LogisticRegression
 import streamlit as st
-import streamlit.components.v1 as components
 
 # ========== 页面配置 ==========
 st.set_page_config(page_title="大众点评评论优缺点总结", page_icon="🍽️", layout="wide")
@@ -40,9 +39,7 @@ plt.rcParams['axes.unicode_minus'] = False
 plt.rcParams['font.size'] = 8
 
 # ========== 通用工具：放大查看 ==========
-@st.experimental_dialog("🔍 放大查看")
-def show_big(fig):
-    st.pyplot(fig)
+@st.dialog("🔍 放大查看", width="large")
 def show_big(fig):
     st.pyplot(fig)
 
@@ -58,7 +55,8 @@ if "need_scroll_top" not in st.session_state:
     st.session_state.need_scroll_top = False
 
 def scroll_to_top():
-    components.html(
+    # 新版 Streamlit 用 st.html 注入 JS；不再使用已弃用的 components.html
+    st.html(
         """
         <script>
             function tryScroll() {
@@ -76,8 +74,7 @@ def scroll_to_top():
             setTimeout(tryScroll, 250);
             setTimeout(tryScroll, 600);
         </script>
-        """,
-        height=0,
+        """
     )
 
 # ========== 1. 加载数据 ==========
@@ -135,14 +132,13 @@ if st.session_state.last_sample_size is not None and \
     st.session_state.need_scroll_top = True
 st.session_state.last_sample_size = sample_size
 
-# 采样：限制好评数量，避免训练过慢
 pos_all = df[df['label'] == 1]
 neg_all = df[df['label'] == 0]
 
 if len(df) > sample_size:
     max_pos = sample_size - len(neg_all) if len(neg_all) < sample_size else sample_size // 2
-    n_pos = min(len(pos_all), max_pos)
-    n_neg = min(len(neg_all), sample_size - n_pos)
+    n_pos = max(1, min(len(pos_all), max_pos))
+    n_neg = max(1, min(len(neg_all), sample_size - n_pos))
     df_used = pd.concat([
         pos_all.sample(n=n_pos, random_state=42),
         neg_all.sample(n=n_neg, random_state=42),
@@ -426,6 +422,11 @@ else:
 
 st.markdown("---")
 st.caption("课程项目 · 基于大众点评评论的优缺点挖掘与可视化")
+
+# ========== 8. 页面末尾：滑块变化后回到顶部 ==========
+if st.session_state.get("need_scroll_top"):
+    scroll_to_top()
+    st.session_state.need_scroll_top = False
 
 # ========== 8. 页面末尾：滑块变化后回到顶部 ==========
 if st.session_state.get("need_scroll_top"):
