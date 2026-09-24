@@ -1,8 +1,11 @@
 import re
+import os
 import jieba
 import pandas as pd
 import numpy as np
+import matplotlib
 import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
 from collections import Counter, defaultdict
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.model_selection import train_test_split
@@ -26,20 +29,75 @@ st.markdown("""
 st.title("🍽️ 大众点评评论优缺点总结系统")
 st.markdown("基于情感分类与属性抽取的餐饮评论分析工具")
 
-plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'DejaVu Sans']
+# ========== 中文字体（从仓库读取，不联网） ==========
+FONT_CANDIDATES = [
+    "simhei.ttf",
+    "SimHei.ttf",
+    "main/simhei.ttf",
+    "main/SimHei.ttf",
+    "/mount/src/pingjia/simhei.ttf",
+    "/mount/src/pingjia/SimHei.ttf",
+    "/mount/src/pingjia/main/simhei.ttf",
+    "/mount/src/pingjia/main/SimHei.ttf",
+    "/tmp/simhei.ttf",
+]
+
+FONT_PATH = None
+for p in FONT_CANDIDATES:
+    if os.path.exists(p):
+        FONT_PATH = p
+        break
+
+if FONT_PATH:
+    try:
+        fm.fontManager.addfont(FONT_PATH)
+        _font_name = fm.FontProperties(fname=FONT_PATH).get_name()
+        plt.rcParams['font.sans-serif'] = [_font_name, 'DejaVu Sans']
+    except Exception:
+        plt.rcParams['font.sans-serif'] = ['DejaVu Sans']
+else:
+    plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'DejaVu Sans']
+
 plt.rcParams['axes.unicode_minus'] = False
 plt.rcParams['font.size'] = 8
+
+# ========== 图片放大查看工具 ==========
+@st.dialog("🔍 放大查看", width="large")
+def show_big(fig):
+    st.pyplot(fig)
+
+def show_chart_with_zoom(fig, key):
+    st.pyplot(fig)
+    if st.button("🔍 放大查看", key=key, use_container_width=True):
+        show_big(fig)
 
 # ========== 1. 加载数据 ==========
 @st.cache_data(show_spinner=False)
 def load_data(path):
     return pd.read_csv(path, encoding='gb18030', low_memory=False)
 
-FILE_PATH = '大众点评评论数据.csv'
+# 自动查找 CSV 路径
+CSV_CANDIDATES = [
+    "大众点评评论数据.csv",
+    "main/大众点评评论数据.csv",
+    "/mount/src/pingjia/大众点评评论数据.csv",
+    "/mount/src/pingjia/main/大众点评评论数据.csv",
+]
+
+FILE_PATH = None
+for p in CSV_CANDIDATES:
+    if os.path.exists(p):
+        FILE_PATH = p
+        break
+
+if FILE_PATH is None:
+    st.error("找不到数据文件「大众点评评论数据.csv」，请确认它已上传到 GitHub 仓库。")
+    st.stop()
+
 try:
     df_raw = load_data(FILE_PATH)
-except FileNotFoundError:
-    st.error(f"找不到数据文件：{FILE_PATH}。请确认文件与 app.py 在同一目录下。")
+except Exception as e:
+    st.error(f"读取 CSV 失败：{e}")
     st.stop()
 
 st.success(f"数据加载成功，共 {len(df_raw)} 条评论")
@@ -61,7 +119,7 @@ if len(df) > sample_size:
 st.write(f"当前使用数据：**{len(df)}** 条")
 st.write(f"好评：**{len(df[df['label']==1])}** 条 ｜ 差评：**{len(df[df['label']==0])}** 条")
 
-# ========== 4. 文本预处理 ==========
+# ========== 4. 分词 ==========
 stopwords = set(['的','了','还','很','也','就','都','和','与','在','是','有','一','个','这','那','不','我','你','他','她','它','们','但','而','且','或','被','把','给','让','从','到','对','为','以','于','之','其','此','该','等','着','过','吗','呢','吧','啊','呀','哦','嗯','这个','那个','什么','怎么','可以','没有','不是'])
 
 def preprocess(text):
@@ -120,7 +178,7 @@ with col_img1:
                      ha='center', fontsize=9)
     ax1.set_ylim(0, max(real_pos, real_neg) * 1.2)
     plt.tight_layout()
-    st.pyplot(fig1)
+    show_chart_with_zoom(fig1, key="zoom_A")
 
 st.markdown("---")
 
@@ -158,7 +216,7 @@ with col_img2:
                      ha='center', fontsize=9)
     ax2.set_ylim(0, len(y_test) * 1.15)
     plt.tight_layout()
-    st.pyplot(fig2)
+    show_chart_with_zoom(fig2, key="zoom_B")
 
 st.progress(min(acc, 1.0), text=f"准确度 {acc:.1%}")
 
@@ -210,7 +268,7 @@ with st.expander("📊 详细指标可视化（精确率 / 召回率 / F1）"):
                              xytext=(0, 3), textcoords='offset points',
                              ha='center', fontsize=8)
         plt.tight_layout()
-        st.pyplot(fig3)
+        show_chart_with_zoom(fig3, key="zoom_C")
 
     with st.expander("查看原始分类报告文本"):
         st.code(report)
@@ -323,7 +381,7 @@ if all_aspects:
         ax4.set_title('各属性在好评/差评中的提及次数对比', fontsize=9)
         ax4.legend(fontsize=8)
         plt.tight_layout()
-        st.pyplot(fig4)
+        show_chart_with_zoom(fig4, key="zoom_bar")
 
     col_desc2, col_img2b = st.columns([1, 2])
     with col_desc2:
@@ -344,7 +402,7 @@ if all_aspects:
         ax5.set_title('属性情感雷达图', fontsize=9)
         ax5.legend(loc='upper right', bbox_to_anchor=(1.3, 1.1), fontsize=8)
         plt.tight_layout()
-        st.pyplot(fig5)
+        show_chart_with_zoom(fig5, key="zoom_radar")
 else:
     st.warning("未抽取到任何属性，可能是属性词典与数据不匹配。")
 
