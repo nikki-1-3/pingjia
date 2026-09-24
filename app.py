@@ -104,7 +104,15 @@ df['review'] = df['review'].astype(str)
 df = df[df['label'] != 3].reset_index(drop=True)
 df['label'] = df['label'].apply(lambda x: 1 if x >= 4 else 0)
 
-sample_size = st.sidebar.slider("采样数量", min_value=1000, max_value=20000, value=5000, step=1000)
+# ===== 建议用户把采样调大，提升差评识别 =====
+st.sidebar.markdown("### ⚙️ 采样设置")
+st.sidebar.info(
+    "💡 **采样越大，差评识别越准**。\n\n"
+    "建议把采样调到 **20000**，"
+    "这样训练集里差评能有 **1000+ 条**，模型能学到更多差评表达方式。"
+)
+
+sample_size = st.sidebar.slider("采样数量", min_value=1000, max_value=20000, value=20000, step=1000)
 if len(df) > sample_size:
     df = df.sample(n=sample_size, random_state=42).reset_index(drop=True)
 
@@ -143,9 +151,7 @@ vectorizer = TfidfVectorizer(max_features=5000)
 X_train_vec = vectorizer.fit_transform(X_train)
 X_test_vec = vectorizer.transform(X_test)
 
-# ===== 关键改动：训练集里"下采样"好评，让好评差评比例接近 =====
-# 现在训练集里好评 ~3300、差评 ~210，比例严重失衡。
-# 把好评也下采样到 3 倍差评数量（即 ~630 条），让模型学得更平衡。
+# ===== 过采样：差评复制到好评的 3 倍 =====
 X_train_pos = X_train_vec[y_train == 1]
 X_train_neg = X_train_vec[y_train == 0]
 y_train_pos = y_train[y_train == 1]
@@ -154,17 +160,8 @@ y_train_neg = y_train[y_train == 0]
 n_pos = X_train_pos.shape[0]
 n_neg = X_train_neg.shape[0]
 
-# 好评下采样到 3 倍差评
-rng = np.random.RandomState(42)
-if n_pos > n_neg * 3:
-    pos_idx = rng.choice(n_pos, size=n_neg * 3, replace=False)
-    X_train_pos = X_train_pos[pos_idx]
-    y_train_pos = y_train_pos[pos_idx]
-    n_pos = X_train_pos.shape[0]
-
-# 差评过采样到和好评同量
 if n_neg > 0 and n_pos > n_neg:
-    ratio = int(np.ceil(n_pos / n_neg))
+    ratio = int(np.ceil(n_pos / n_neg * 3.0))
     X_train_neg_up = vstack([X_train_neg] * ratio)
     y_train_neg_up = np.tile(y_train_neg, ratio)
 else:
@@ -175,7 +172,7 @@ X_train_vec = vstack([X_train_pos, X_train_neg_up])
 y_train = np.concatenate([y_train_pos, y_train_neg_up])
 
 st.sidebar.success(
-    f"✅ 训练集：好评下采样到 {X_train_pos.shape[0]} 条，"
+    f"✅ 训练集：好评 {X_train_pos.shape[0]} 条，"
     f"差评过采样到 {X_train_neg_up.shape[0]} 条"
 )
 
@@ -188,14 +185,11 @@ clf = LogisticRegression(
 clf.fit(X_train_vec, y_train)
 
 # ===== 双层兜底 =====
-# 第 1 层：模型概率阈值极低（0.05）
 proba = clf.predict_proba(X_test_vec)
-THRESHOLD = 0.05
+THRESHOLD = 0.10
 y_pred = (proba[:, 1] >= THRESHOLD).astype(int)
 
-# 第 2 层：硬规则，命中强差评或中性偏负词，直接判差评
 STRONG_NEG = [
-    # 强差评
     '难吃', '不好吃', '太咸', '太淡', '太辣', '太甜', '太油', '太腻', '腥', '异味',
     '不新鲜', '变质', '馊', '难以下咽',
     '脏', '太吵', '很吵', '环境差', '不卫生', '乱',
@@ -203,9 +197,7 @@ STRONG_NEG = [
     '太贵', '不值', '坑', '宰客', '贵死', '性价比低',
     '失望', '差评', '再也不来', '不推荐', '踩雷', '拉黑', '恶心', '糟糕',
     '不会再', '很差', '不行', '烂', '别来', '避雷',
-    # 中性偏负
-    '一般', '还行吧', '不太', '有点', '稍微', '勉强', '凑合', '一般般',
-    '没什么', '没有特别', '不算', '不太行', '就那么', '普通',
+    '一般般', '不太行', '凑合',
 ]
 X_test_list = list(X_test)
 hard_hits = 0
@@ -306,7 +298,7 @@ with col_desc:
         f"**差评**：精确率 **{prec_neg:.0%}**，召回率 **{rec_neg:.0%}**，F1 **{f1_neg:.0%}**"
     )
     if rec_neg < 0.6:
-        st.warning("⚠️ 差评召回率偏低，还有差评被漏掉。")
+        st.warning("⚠️ 差评召回率偏低。**建议把侧边栏采样调到 20000**。")
     elif rec_neg < 0.8:
         st.info("🙂 差评召回率不错，大部分差评能抓到。")
     else:
@@ -339,7 +331,7 @@ with col_chart:
 with st.expander("查看原始分类报告文本"):
     st.code(report)
 
-# ---- D. 混淆矩阵（折叠面板） ----
+# ---- D. 混淆矩阵 ----
 st.markdown("---")
 with st.expander("📊 点击展开查看混淆矩阵（判对 / 判错 的四种情况）", expanded=False):
     cm = confusion_matrix(y_test, y_pred)
@@ -357,7 +349,7 @@ with st.expander("📊 点击展开查看混淆矩阵（判对 / 判错 的四�
         )
         st.markdown("---")
         if fp > tn and fp > 20:
-            st.error(f"⚠️ 有 **{fp}** 条真实差评被判成了好评，漏抓的差评比抓到的还多。")
+            st.error(f"⚠️ 有 **{fp}** 条真实差评被判成了好评，漏抓的差评比抓到的还多。\n\n**建议把侧边栏采样调到 20000**，让训练集里差评变多。")
         elif fp > 20:
             st.warning(f"⚠️ 有 **{fp}** 条真实差评被漏掉了，差评召回率还能再提高。")
         else:
