@@ -141,23 +141,24 @@ vectorizer = TfidfVectorizer(max_features=5000)
 X_train_vec = vectorizer.fit_transform(X_train)
 X_test_vec = vectorizer.transform(X_test)
 
-# ===== 过采样：训练集里的差评复制到和好评一样多 =====
+# ===== 过采样：用 SMOTE 合成新差评样本 =====
 try:
-    from imblearn.over_sampling import RandomOverSampler
-    ros = RandomOverSampler(random_state=42)
-    X_train_vec, y_train = ros.fit_resample(X_train_vec, y_train)
-    over_sampled = True
+    from imblearn.over_sampling import SMOTE
+    smote = SMOTE(random_state=42, k_neighbors=3)
+    X_train_vec, y_train = smote.fit_resample(X_train_vec, y_train)
+    st.sidebar.success("✅ SMOTE 过采样已启用")
 except ImportError:
-    over_sampled = False
-    st.sidebar.warning("未安装 imblearn，未启用过采样")
+    st.sidebar.warning("⚠️ 未安装 imblearn，未启用过采样")
+except Exception as e:
+    st.sidebar.warning(f"⚠️ SMOTE 失败：{e}")
 
 # 训练
-clf = LogisticRegression(class_weight='balanced', max_iter=300, solver='liblinear')
+clf = LogisticRegression(class_weight='balanced', max_iter=1000, solver='liblinear')
 clf.fit(X_train_vec, y_train)
 
 # ===== 调整判定阈值 =====
 proba = clf.predict_proba(X_test_vec)
-THRESHOLD = 0.4
+THRESHOLD = 0.35
 y_pred = (proba[:, 1] >= THRESHOLD).astype(int)
 
 report = classification_report(y_test, y_pred, target_names=['差评', '好评'], zero_division=0)
@@ -281,55 +282,53 @@ with col_chart:
 with st.expander("查看原始分类报告文本"):
     st.code(report)
 
-# ---- D. 混淆矩阵可视化 ----
+# ---- D. 混淆矩阵（折叠面板） ----
 st.markdown("---")
-st.subheader("D. 混淆矩阵：判对 / 判错 的四种情况")
+with st.expander("📊 点击展开查看混淆矩阵（判对 / 判错 的四种情况）", expanded=False):
+    cm = confusion_matrix(y_test, y_pred)
+    tn, fp, fn, tp = cm.ravel()
 
-cm = confusion_matrix(y_test, y_pred)
-tn, fp, fn, tp = cm.ravel()
-
-col_desc, col_chart = st.columns([1, 2])
-with col_desc:
-    st.markdown("**这张图在说什么**")
-    st.markdown(
-        "矩阵里每一格代表系统判断的一种结果：\n\n"
-        f"- ✅ **真的差评，判成差评**：{tn} 条\n"
-        f"- ❌ **真的差评，判成好评**：{fp} 条（漏抓的差评）\n"
-        f"- ❌ **真的好，判成差评**：{fn} 条（误伤）\n"
-        f"- ✅ **真的好，判成好评**：{tp} 条"
-    )
-    st.markdown("---")
-    if fp > tn and fp > 20:
-        st.error(
-            f"⚠️ **漏抓的差评比抓到的还多**\n\n"
-            f"有 **{fp}** 条真实差评被判成了好评，"
-            f"而抓到的只有 **{tn}** 条。这些漏掉的差评就是"
-            f"『用户吐槽但系统没发现』的问题。"
+    col_desc, col_chart = st.columns([1, 2])
+    with col_desc:
+        st.markdown("**这张图在说什么**")
+        st.markdown(
+            "矩阵里每一格代表系统判断的一种结果：\n\n"
+            f"- ✅ **真的差评，判成差评**：{tn} 条\n"
+            f"- ❌ **真的差评，判成好评**：{fp} 条（漏抓的差评）\n"
+            f"- ❌ **真的好，判成差评**：{fn} 条（误伤）\n"
+            f"- ✅ **真的好，判成好评**：{tp} 条"
         )
-    elif fp > 20:
-        st.warning(f"⚠️ 有 **{fp}** 条真实差评被漏掉了，差评召回率还能再提高。")
-    else:
-        st.success("✅ 漏抓的差评很少，模型对差评的识别已经比较到位。")
+        st.markdown("---")
+        if fp > tn and fp > 20:
+            st.error(
+                f"⚠️ **漏抓的差评比抓到的还多**\n\n"
+                f"有 **{fp}** 条真实差评被判成了好评，"
+                f"而抓到的只有 **{tn}** 条。"
+            )
+        elif fp > 20:
+            st.warning(f"⚠️ 有 **{fp}** 条真实差评被漏掉了，差评召回率还能再提高。")
+        else:
+            st.success("✅ 漏抓的差评很少，模型对差评的识别已经比较到位。")
 
-with col_chart:
-    fig6, ax6 = plt.subplots(figsize=(5, 4))
-    im = ax6.imshow(cm, cmap='Oranges', aspect='auto')
-    for i in range(2):
-        for j in range(2):
-            val = cm[i, j]
-            color = 'white' if val > cm.max() * 0.5 else 'black'
-            ax6.text(j, i, f'{val}', ha='center', va='center',
-                     color=color, fontsize=16, fontweight='bold')
-    ax6.set_xticks([0, 1])
-    ax6.set_xticklabels(['判成差评', '判成好评'], fontsize=10)
-    ax6.set_yticks([0, 1])
-    ax6.set_yticklabels(['真实差评', '真实好评'], fontsize=10)
-    ax6.set_xlabel('系统判断', fontsize=10)
-    ax6.set_ylabel('实际情况', fontsize=10)
-    ax6.set_title('混淆矩阵：四种判断结果', fontsize=11)
-    plt.colorbar(im, ax=ax6, fraction=0.046, pad=0.04)
-    plt.tight_layout()
-    show_chart_with_zoom(fig6, key="zoom_D")
+    with col_chart:
+        fig4, ax4 = plt.subplots(figsize=(5, 4))
+        im = ax4.imshow(cm, cmap='Oranges', aspect='auto')
+        for i in range(2):
+            for j in range(2):
+                val = cm[i, j]
+                color = 'white' if val > cm.max() * 0.5 else 'black'
+                ax4.text(j, i, f'{val}', ha='center', va='center',
+                         color=color, fontsize=16, fontweight='bold')
+        ax4.set_xticks([0, 1])
+        ax4.set_xticklabels(['判成差评', '判成好评'], fontsize=10)
+        ax4.set_yticks([0, 1])
+        ax4.set_yticklabels(['真实差评', '真实好评'], fontsize=10)
+        ax4.set_xlabel('系统判断', fontsize=10)
+        ax4.set_ylabel('实际情况', fontsize=10)
+        ax4.set_title('混淆矩阵：四种判断结果', fontsize=11)
+        plt.colorbar(im, ax=ax4, fraction=0.046, pad=0.04)
+        plt.tight_layout()
+        show_chart_with_zoom(fig4, key="zoom_D")
 
 # ========== 5. 优缺点抽取 ==========
 st.header("二、优缺点抽取")
@@ -433,16 +432,16 @@ if all_aspects:
         st.markdown("**各属性提及次数对比**")
         st.markdown("柱状图展示每个属性在好评和差评中被提到的次数。")
     with col_img1b:
-        fig4, ax4 = plt.subplots(figsize=(6, 3.2))
-        ax4.bar(x - width/2, pos_vals, width, label='好评提及', color='#FF6B35')
-        ax4.bar(x + width/2, neg_vals, width, label='差评提及', color='#FFB088')
-        ax4.set_xticks(x)
-        ax4.set_xticklabels(all_aspects, rotation=15, fontsize=8)
-        ax4.set_ylabel('提及次数', fontsize=8)
-        ax4.set_title('各属性在好评/差评中的提及次数对比', fontsize=9)
-        ax4.legend(fontsize=8)
+        fig5, ax5 = plt.subplots(figsize=(6, 3.2))
+        ax5.bar(x - width/2, pos_vals, width, label='好评提及', color='#FF6B35')
+        ax5.bar(x + width/2, neg_vals, width, label='差评提及', color='#FFB088')
+        ax5.set_xticks(x)
+        ax5.set_xticklabels(all_aspects, rotation=15, fontsize=8)
+        ax5.set_ylabel('提及次数', fontsize=8)
+        ax5.set_title('各属性在好评/差评中的提及次数对比', fontsize=9)
+        ax5.legend(fontsize=8)
         plt.tight_layout()
-        show_chart_with_zoom(fig4, key="zoom_bar")
+        show_chart_with_zoom(fig5, key="zoom_bar")
 
     col_desc2, col_img2b = st.columns([1, 2])
     with col_desc2:
@@ -453,17 +452,17 @@ if all_aspects:
         pos_vals_r = pos_vals + [pos_vals[0]]
         neg_vals_r = neg_vals + [neg_vals[0]]
         angles_r = angles + [angles[0]]
-        fig5, ax5 = plt.subplots(figsize=(4, 4), subplot_kw=dict(polar=True))
-        ax5.plot(angles_r, pos_vals_r, 'o-', linewidth=2, label='好评', color='#FF6B35')
-        ax5.fill(angles_r, pos_vals_r, alpha=0.25, color='#FF6B35')
-        ax5.plot(angles_r, neg_vals_r, 'o-', linewidth=2, label='差评', color='#FFB088')
-        ax5.fill(angles_r, neg_vals_r, alpha=0.25, color='#FFB088')
-        ax5.set_xticks(angles)
-        ax5.set_xticklabels(all_aspects, fontsize=8)
-        ax5.set_title('属性情感雷达图', fontsize=9)
-        ax5.legend(loc='upper right', bbox_to_anchor=(1.3, 1.1), fontsize=8)
+        fig6, ax6 = plt.subplots(figsize=(4, 4), subplot_kw=dict(polar=True))
+        ax6.plot(angles_r, pos_vals_r, 'o-', linewidth=2, label='好评', color='#FF6B35')
+        ax6.fill(angles_r, pos_vals_r, alpha=0.25, color='#FF6B35')
+        ax6.plot(angles_r, neg_vals_r, 'o-', linewidth=2, label='差评', color='#FFB088')
+        ax6.fill(angles_r, neg_vals_r, alpha=0.25, color='#FFB088')
+        ax6.set_xticks(angles)
+        ax6.set_xticklabels(all_aspects, fontsize=8)
+        ax6.set_title('属性情感雷达图', fontsize=9)
+        ax6.legend(loc='upper right', bbox_to_anchor=(1.3, 1.1), fontsize=8)
         plt.tight_layout()
-        show_chart_with_zoom(fig5, key="zoom_radar")
+        show_chart_with_zoom(fig6, key="zoom_radar")
 else:
     st.warning("未抽取到任何属性。")
 
