@@ -227,6 +227,75 @@ with col_img2:
 
 st.progress(min(acc, 1.0), text=f"准确度 {acc:.1%}")
 
+# ========== 详细指标可视化 ==========
+st.subheader("C. 详细指标可视化")
+
+# 从 report 里解析出好评/差评的精确率、召回率、F1
+from sklearn.metrics import precision_score, recall_score, f1_score
+
+prec_pos = precision_score(y_test, y_pred, pos_label=1, zero_division=0)
+rec_pos  = recall_score(y_test, y_pred, pos_label=1, zero_division=0)
+f1_pos   = f1_score(y_test, y_pred, pos_label=1, zero_division=0)
+
+prec_neg = precision_score(y_test, y_pred, pos_label=0, zero_division=0)
+rec_neg  = recall_score(y_test, y_pred, pos_label=0, zero_division=0)
+f1_neg   = f1_score(y_test, y_pred, pos_label=0, zero_division=0)
+
+col_desc, col_chart = st.columns([1, 2])
+
+with col_desc:
+    st.markdown("**三个指标分别是什么意思**")
+    st.markdown(
+        "- **精确率**：系统判为某一类的，有多少是真的\n"
+        "- **召回率**：真实的某一类，有多少被系统找出来\n"
+        "- **F1**：精确率和召回率的综合分，越高越好"
+    )
+    st.markdown("---")
+    st.markdown(
+        f"**好评**：精确率 **{prec_pos:.0%}**，召回率 **{rec_pos:.0%}**，F1 **{f1_pos:.0%}**\n\n"
+        f"**差评**：精确率 **{prec_neg:.0%}**，召回率 **{rec_neg:.0%}**，F1 **{f1_neg:.0%}**"
+    )
+
+    # 智能诊断
+    if rec_neg < 0.1 and rec_pos > 0.9:
+        st.error(
+            "⚠️ **严重问题：差评一条都没识别出来**\n\n"
+            "系统把所有评论都判成了好评，94% 的准确度是"
+            "『全押多数类』刷出来的，并不代表模型真的会分好坏。"
+            "差评全部漏掉，对『找缺点』这个目标来说是无效的。"
+        )
+    elif rec_neg < 0.3:
+        st.warning("⚠️ 差评召回率偏低，很多差评没被识别出来。")
+    elif rec_neg < 0.6:
+        st.info("🙂 差评召回率一般，能识别一部分差评。")
+    else:
+        st.success("✅ 差评召回率正常，模型已能识别大部分差评。")
+
+with col_chart:
+    metrics = ['精确率', '召回率', 'F1']
+    pos_scores = [prec_pos, rec_pos, f1_pos]
+    neg_scores = [prec_neg, rec_neg, f1_neg]
+
+    x = np.arange(len(metrics))
+    w = 0.38
+    fig3, ax3 = plt.subplots(figsize=(5.5, 3.4))
+    b1 = ax3.bar(x - w/2, pos_scores, w, label='好评', color='#FF6B35')
+    b2 = ax3.bar(x + w/2, neg_scores, w, label='差评', color='#FFB088')
+    ax3.set_xticks(x)
+    ax3.set_xticklabels(metrics, fontsize=10)
+    ax3.set_ylim(0, 1.15)
+    ax3.set_ylabel('得分', fontsize=9)
+    ax3.set_title('好评 / 差评 三项指标对比', fontsize=11)
+    ax3.legend(fontsize=9)
+    for bars in (b1, b2):
+        for b in bars:
+            h = b.get_height()
+            ax3.annotate(f'{h:.2f}', (b.get_x() + b.get_width()/2, h),
+                         xytext=(0, 3), textcoords='offset points',
+                         ha='center', fontsize=8)
+    plt.tight_layout()
+    show_chart_with_zoom(fig3, key="zoom_C")
+
 with st.expander("查看原始分类报告文本"):
     st.code(report)
 
