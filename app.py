@@ -70,19 +70,18 @@ else:
 plt.rcParams['axes.unicode_minus'] = False
 plt.rcParams['font.size'] = 8
 
-# ========== 侧边栏字体诊断 ==========
 with st.sidebar.expander("🔤 字体诊断", expanded=False):
     if FONT_PATH:
         st.write(f"路径：`{FONT_PATH}`")
         st.write(f"大小：**{FONT_SIZE_MB:.2f} MB**")
         if FONT_SIZE_MB < 0.5:
-            st.error("❌ 字体文件不完整（可能 Git LFS 没拉取）")
+            st.error("❌ 字体不完整（LFS 未拉取）")
         else:
             st.success("✅ 字体已加载")
     else:
         st.error("❌ 未找到字体文件")
 
-# ========== 图片放大查看 ==========
+# ========== 图片放大 ==========
 @st.dialog("🔍 放大查看", width="large")
 def show_big(fig):
     st.pyplot(fig)
@@ -92,24 +91,19 @@ def show_chart_with_zoom(fig, key):
     if st.button("🔍 放大查看", key=key, use_container_width=True):
         show_big(fig)
 
-# ========== 1. 加载数据集 ==========
-@st.cache_data
-def load_data(path):
-    return pd.read_csv(path, encoding='gb18030', low_memory=False)
+# ========== 1. 加载数据（从 LFS raw URL 下载） ==========
+# 因为 CSV 走了 Git LFS，Cloud 克隆时只拿到几百字节的指针。
+# 直接用 media.githubusercontent.com 下载真实文件。
+CSV_URL = "https://media.githubusercontent.com/media/nikki-1-3/pingjia/refs/heads/main/%E5%A4%A7%E4%BC%97%E7%82%B9%E8%AF%84%E8%AF%84%E8%AE%BA%E6%95%B0%E6%8D%AE.csv"
 
-FILE_PATH = '大众点评评论数据.csv'
-if not os.path.exists(FILE_PATH):
-    alt = 'main/大众点评评论数据.csv'
-    if os.path.exists(alt):
-        FILE_PATH = alt
-    else:
-        st.error(f"找不到数据文件：{FILE_PATH}。")
-        st.stop()
+@st.cache_data(show_spinner="正在下载数据集（首次约几十 MB，请稍候）...")
+def load_data(url):
+    return pd.read_csv(url, encoding='gb18030', low_memory=False)
 
 try:
-    df_raw = load_data(FILE_PATH)
+    df_raw = load_data(CSV_URL)
 except Exception as e:
-    st.error(f"读取 CSV 失败：{e}")
+    st.error(f"数据下载失败：{e}")
     st.stop()
 
 st.success(f"数据加载成功，共 {len(df_raw)} 条评论")
@@ -247,7 +241,6 @@ aspect_dict = {
     '上菜速度': ['上菜','速度','等','慢','快','排队','催'],
     '分量': ['分量','份量','量','少','足','多','精致'],
 }
-
 pos_words = {
     '多': '多', '足': '足', '大': '大', '好': '好', '不错': '不错',
     '干净': '干净', '方便': '方便', '热情': '热情', '周到': '周到',
@@ -255,7 +248,6 @@ pos_words = {
     '喜欢': '喜欢', '漂亮': '漂亮', '好吃': '好吃', '香': '香',
     '实惠': '实惠', '快': '快', '新鲜': '新鲜', '美味': '美味', '赞': '赞'
 }
-
 neg_words = {
     '少': '少', '小': '小', '差': '差', '脏': '脏', '吵': '吵',
     '旧': '旧', '破': '破', '坏': '坏', '失望': '失望', '糟糕': '糟糕',
@@ -315,7 +307,6 @@ for aspect, direction, word in neg_aspects:
 
 # ========== 6. 总结展示 ==========
 col1, col2 = st.columns(2)
-
 with col1:
     st.subheader("✅ 优点")
     for aspect, word_counter in sorted(pos_detail.items(), key=lambda x: -sum(x[1].values())):
@@ -324,7 +315,6 @@ with col1:
             continue
         phrases = [f"{aspect}{w}" for w, c in word_counter.most_common(3)]
         st.write(f"- **{aspect}**（提及 {total} 次）：{'、'.join(phrases)}")
-
 with col2:
     st.subheader("❌ 缺点")
     for aspect, word_counter in sorted(neg_detail.items(), key=lambda x: -sum(x[1].values())):
