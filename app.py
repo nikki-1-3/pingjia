@@ -113,53 +113,79 @@ report = classification_report(y_test, y_pred, target_names=['差评','好评'],
 # 文字和图片同行
 from sklearn.metrics import accuracy_score
 
+from sklearn.metrics import accuracy_score
+
 # ========================================================
-# 板块 A：情感分类 —— 只看"评价好坏"的判断结果
+# 板块 A：评价好坏 —— 只看评论本身是好是差
 # ========================================================
-st.subheader("A. 评价好坏：判断结果")
+st.subheader("A. 评价好坏：数据构成")
 
 real_pos = int((y_test == 1).sum())
 real_neg = int((y_test == 0).sum())
-correct_pos = int(((y_test == 1) & (y_pred == 1)).sum())
-correct_neg = int(((y_test == 0) & (y_pred == 0)).sum())
-wrong_pos = real_pos - correct_pos
-wrong_neg = real_neg - correct_neg
 
 st.markdown(
-    f"共 **{len(y_test)}** 条评论参与判断："
-    f"真实好评 **{real_pos}** 条，真实差评 **{real_neg}** 条。"
-)
-st.markdown(
-    f"- 好评：判对 **{correct_pos}** 条，判错 **{wrong_pos}** 条\n"
-    f"- 差评：判对 **{correct_neg}** 条，判错 **{wrong_neg}** 条"
+    f"测试集共 **{len(y_test)}** 条评论："
+    f"好评 **{real_pos}** 条，差评 **{real_neg}** 条。"
 )
 
-# 图：好评 / 差评 各自判对判错
-labels = ['好评', '差评']
-correct_counts = [correct_pos, correct_neg]
-wrong_counts = [wrong_pos, wrong_neg]
-
-x = np.arange(len(labels))
-w = 0.38
-fig1, ax1 = plt.subplots(figsize=(6, 3.4))
-b1 = ax1.bar(x - w/2, correct_counts, w, label='判对', color='#FF6B35')
-b2 = ax1.bar(x + w/2, wrong_counts, w, label='判错', color='#FFD9C2')
-ax1.set_xticks(x)
-ax1.set_xticklabels(labels, fontsize=11)
+# 图 1：只画好评/差评的数量，不涉及对错
+fig1, ax1 = plt.subplots(figsize=(5, 3.2))
+bars = ax1.bar(['好评', '差评'], [real_pos, real_neg],
+               color=['#FF6B35', '#FFB088'], width=0.5)
 ax1.set_ylabel('评论条数', fontsize=9)
-ax1.set_title('好评 / 差评 各判对多少', fontsize=11)
-ax1.legend(fontsize=9)
-for bars in (b1, b2):
-    for b in bars:
-        h = b.get_height()
-        ax1.annotate(f'{int(h)}', (b.get_x() + b.get_width()/2, h),
-                     xytext=(0, 4 if h > 0 else -12),
-                     textcoords='offset points',
-                     ha='center', fontsize=8,
-                     color='#999' if h == 0 else 'black')
+ax1.set_title('评价好坏：各有多少条', fontsize=11)
+for b in bars:
+    h = b.get_height()
+    ax1.annotate(f'{int(h)}', (b.get_x() + b.get_width()/2, h),
+                 xytext=(0, 4), textcoords='offset points',
+                 ha='center', fontsize=9)
 ax1.set_ylim(0, max(real_pos, real_neg) * 1.2)
 plt.tight_layout()
 st.pyplot(fig1)
+
+st.markdown("---")
+
+# ========================================================
+# 板块 B：判断准确度 —— 只看整体判对判错
+# ========================================================
+st.subheader("B. 判断准确度：整体表现")
+
+correct_total = int((y_test == y_pred).sum())
+wrong_total = len(y_test) - correct_total
+acc = accuracy_score(y_test, y_pred)
+
+st.markdown(
+    f"系统判断了 **{len(y_test)}** 条评论："
+    f"判对 **{correct_total}** 条，判错 **{wrong_total}** 条，"
+    f"整体准确度 **{acc:.1%}**。"
+)
+
+# 图 2：只画判对/判错的数量，不区分好评差评
+fig2, ax2 = plt.subplots(figsize=(5, 3.2))
+bars2 = ax2.bar(['判对', '判错'], [correct_total, wrong_total],
+                color=['#E85D2F', '#FFD9C2'], width=0.5)
+ax2.set_ylabel('评论条数', fontsize=9)
+ax2.set_title('判断准确度：整体判对 / 判错', fontsize=11)
+for b in bars2:
+    h = b.get_height()
+    ax2.annotate(f'{int(h)}', (b.get_x() + b.get_width()/2, h),
+                 xytext=(0, 4), textcoords='offset points',
+                 ha='center', fontsize=9)
+ax2.set_ylim(0, len(y_test) * 1.15)
+plt.tight_layout()
+st.pyplot(fig2)
+
+st.progress(min(acc, 1.0), text=f"准确度 {acc:.1%}")
+
+if acc >= 0.9:
+    st.success("😄 准确度很高，结果可以放心参考。")
+elif acc >= 0.8:
+    st.info("🙂 准确度不错，结果基本可靠。")
+else:
+    st.warning("😐 准确度一般，建议结合原文一起看。")
+
+with st.expander("想看更细的指标（可选）"):
+    st.code(report)
 
 st.markdown("---")
 
