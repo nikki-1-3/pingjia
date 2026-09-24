@@ -94,9 +94,10 @@ with st.expander("查看预处理示例"):
         st.write("---")
 
 # ========== 4. 情感分类 ==========
+# ========== 4. 情感分类 ==========
 st.header("一、情感分类")
 
-# ========== 划分训练 / 测试集 ==========
+# -------- 划分训练 / 测试集 --------
 X_train, X_test, y_train, y_test = train_test_split(
     df['clean'], df['label'], test_size=0.3, random_state=42, stratify=df['label']
 )
@@ -105,7 +106,9 @@ vectorizer = TfidfVectorizer(max_features=5000)
 X_train_vec = vectorizer.fit_transform(X_train)
 X_test_vec = vectorizer.transform(X_test)
 
-clf = MultinomialNB()
+# -------- 关键改动：用带类别权重的逻辑回归，解决差评全漏问题 --------
+from sklearn.linear_model import LogisticRegression
+clf = LogisticRegression(class_weight='balanced', max_iter=1000)
 clf.fit(X_train_vec, y_train)
 y_pred = clf.predict(X_test_vec)
 
@@ -229,8 +232,14 @@ with st.expander("📊 详细指标可视化（精确率 / 召回率 / F1）"):
             f"**好评**：精确率 {prec_pos:.1%}，召回率 {rec_pos:.1%}，F1 {f1_pos:.1%}\n\n"
             f"**差评**：精确率 {prec_neg:.1%}，召回率 {rec_neg:.1%}，F1 {f1_neg:.1%}"
         )
-        if rec_neg < 0.1:
-            st.warning("⚠️ 差评召回率很低，说明很多差评没被识别出来。")
+        # 智能提示：改好后应该不会再触发
+        if rec_neg < 0.3:
+            st.warning(
+                "⚠️ 差评召回率仍然偏低，说明部分差评没被识别出来。"
+                "可尝试进一步增加差评样本，或继续调大 class_weight。"
+            )
+        else:
+            st.success("✅ 差评召回率正常，模型已经能识别出大部分差评。")
 
     with col_chart:
         metrics = ['精确率', '召回率', 'F1']
