@@ -14,26 +14,29 @@ from sklearn.naive_bayes import MultinomialNB
 import streamlit as st
 
 # ========== 页面配置 ==========
-st.set_page_config(page_title="大众点评评论优缺点总结", page_icon="🍽️", layout="wide")
+import os
+st.write("### 🔤 字体诊断（临时）")
+st.write(f"工作目录：`{os.getcwd()}`")
 
-st.markdown("""
-<style>
-    .stApp { background-color: #FFF9F5; }
-    h1, h2, h3 { color: #E85D2F !important; }
-    section[data-testid="stSidebar"] { background-color: #FFF3EC; }
-    .stTabs [data-baseweb="tab-list"] { gap: 8px; }
-    .stTabs [data-baseweb="tab"] {
-        background-color: #FFE8DC;
-        border-radius: 8px 8px 0 0;
-        padding: 8px 16px;
-        color: #E85D2F;
-    }
-    .stTabs [aria-selected="true"] { background-color: #FF6B35; color: white; }
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-</style>
-""", unsafe_allow_html=True)
+# 列出工作目录文件
+try:
+    files = os.listdir(".")
+    st.write("当前目录文件：", files)
+except Exception as e:
+    st.write(f"列目录失败：{e}")
 
+# 常见路径逐个检查
+for p in [
+    "simhei.ttf",
+    "./simhei.ttf",
+    "/mount/src/pingjia/simhei.ttf",
+    "/mount/src/pingjia/main/simhei.ttf",
+    "/app/simhei.ttf",
+]:
+    if os.path.exists(p):
+        st.success(f"✅ {p}  ({os.path.getsize(p)/1024/1024:.1f} MB)")
+    else:
+        st.error(f"❌ {p}")
 st.title("🍽️ 大众点评评论优缺点总结系统")
 st.markdown("基于情感分类与属性抽取的餐饮评论分析工具")
 
