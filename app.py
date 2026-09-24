@@ -29,7 +29,7 @@ st.markdown("""
 st.title("🍽️ 大众点评评论优缺点总结系统")
 st.markdown("基于情感分类与属性抽取的餐饮评论分析工具")
 
-# ========== 中文字体（从仓库读取，不联网） ==========
+# ========== 中文字体（带诊断信息） ==========
 FONT_CANDIDATES = [
     "simhei.ttf",
     "SimHei.ttf",
@@ -39,7 +39,6 @@ FONT_CANDIDATES = [
     "/mount/src/pingjia/SimHei.ttf",
     "/mount/src/pingjia/main/simhei.ttf",
     "/mount/src/pingjia/main/SimHei.ttf",
-    "/tmp/simhei.ttf",
 ]
 
 FONT_PATH = None
@@ -48,20 +47,42 @@ for p in FONT_CANDIDATES:
         FONT_PATH = p
         break
 
+# 页面顶部显示字体诊断
+with st.sidebar.expander("🔤 字体诊断", expanded=True):
+    if FONT_PATH:
+        try:
+            size = os.path.getsize(FONT_PATH)
+            st.write(f"✅ 找到：`{FONT_PATH}`")
+            st.write(f"大小：{size/1024/1024:.1f} MB")
+            if size < 500_000:
+                st.warning("⚠️ 文件小于 0.5MB，可能是上传不完整")
+        except Exception as e:
+            st.error(f"读取失败：{e}")
+    else:
+        st.error("❌ 未找到 simhei.ttf")
+        st.caption("请把字体上传到仓库根目录")
+
+# 注册字体
 if FONT_PATH:
     try:
         fm.fontManager.addfont(FONT_PATH)
-        _font_name = fm.FontProperties(fname=FONT_PATH).get_name()
-        plt.rcParams['font.sans-serif'] = [_font_name, 'DejaVu Sans']
-    except Exception:
+        _fp = fm.FontProperties(fname=FONT_PATH)
+        _real_name = _fp.get_name()
+        plt.rcParams['font.sans-serif'] = [_real_name, 'DejaVu Sans']
+        with st.sidebar.expander("🔤 字体诊断", expanded=True):
+            st.write(f"字体名称：`{_real_name}`")
+            st.success("已注册")
+    except Exception as e:
         plt.rcParams['font.sans-serif'] = ['DejaVu Sans']
+        with st.sidebar.expander("🔤 字体诊断", expanded=True):
+            st.error(f"注册失败：{e}")
 else:
-    plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'DejaVu Sans']
+    plt.rcParams['font.sans-serif'] = ['DejaVu Sans']
 
 plt.rcParams['axes.unicode_minus'] = False
 plt.rcParams['font.size'] = 8
 
-# ========== 图片放大查看工具 ==========
+# ========== 图片放大查看 ==========
 @st.dialog("🔍 放大查看", width="large")
 def show_big(fig):
     st.pyplot(fig)
@@ -76,7 +97,6 @@ def show_chart_with_zoom(fig, key):
 def load_data(path):
     return pd.read_csv(path, encoding='gb18030', low_memory=False)
 
-# 自动查找 CSV 路径
 CSV_CANDIDATES = [
     "大众点评评论数据.csv",
     "main/大众点评评论数据.csv",
@@ -91,7 +111,7 @@ for p in CSV_CANDIDATES:
         break
 
 if FILE_PATH is None:
-    st.error("找不到数据文件「大众点评评论数据.csv」，请确认它已上传到 GitHub 仓库。")
+    st.error("找不到数据文件「大众点评评论数据.csv」，请确认已上传到 GitHub 仓库。")
     st.stop()
 
 try:
