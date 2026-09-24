@@ -1,8 +1,11 @@
 import re
+import os
 import jieba
 import pandas as pd
 import numpy as np
+import matplotlib
 import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
 from collections import Counter, defaultdict
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.model_selection import train_test_split
@@ -18,14 +21,6 @@ st.markdown("""
     .stApp { background-color: #FFF9F5; }
     h1, h2, h3 { color: #E85D2F !important; }
     section[data-testid="stSidebar"] { background-color: #FFF3EC; }
-    .stTabs [data-baseweb="tab-list"] { gap: 8px; }
-    .stTabs [data-baseweb="tab"] {
-        background-color: #FFE8DC;
-        border-radius: 8px 8px 0 0;
-        padding: 8px 16px;
-        color: #E85D2F;
-    }
-    .stTabs [aria-selected="true"] { background-color: #FF6B35; color: white; }
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
 </style>
@@ -34,7 +29,26 @@ st.markdown("""
 st.title("🍽️ 大众点评评论优缺点总结系统")
 st.markdown("基于情感分类与属性抽取的餐饮评论分析工具")
 
-plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'DejaVu Sans']
+# ========== 中文字体（只读本地，不联网） ==========
+FONT_CANDIDATES = [
+    "SimHei.ttf",
+    "main/SimHei.ttf",
+    "/mount/src/pingjia/SimHei.ttf",
+    "/mount/src/pingjia/main/SimHei.ttf",
+    "/tmp/SimHei.ttf",
+]
+FONT_PATH = next((p for p in FONT_CANDIDATES if os.path.exists(p)), None)
+
+if FONT_PATH:
+    try:
+        fm.fontManager.addfont(FONT_PATH)
+        _name = fm.FontProperties(fname=FONT_PATH).get_name()
+        plt.rcParams['font.sans-serif'] = [_name, 'DejaVu Sans']
+    except Exception:
+        plt.rcParams['font.sans-serif'] = ['DejaVu Sans']
+else:
+    plt.rcParams['font.sans-serif'] = ['DejaVu Sans']
+
 plt.rcParams['axes.unicode_minus'] = False
 plt.rcParams['font.size'] = 8
 
@@ -48,36 +62,7 @@ def show_chart_with_zoom(fig, key):
     if st.button("🔍 放大查看", key=key, use_container_width=True):
         show_big(fig)
 
-# ========== 回到顶部 ==========
-if "last_sample_size" not in st.session_state:
-    st.session_state.last_sample_size = None
-if "need_scroll_top" not in st.session_state:
-    st.session_state.need_scroll_top = False
-
-def scroll_to_top():
-    # 新版 Streamlit 用 st.html 注入 JS；不再使用已弃用的 components.html
-    st.html(
-        """
-        <script>
-            function tryScroll() {
-                try {
-                    const doc = window.parent.document;
-                    doc.documentElement.scrollTop = 0;
-                    doc.body.scrollTop = 0;
-                    window.parent.scrollTo({top: 0, behavior: 'smooth'});
-                    const appView = doc.querySelector('section.main')
-                                 || doc.querySelector('[data-testid="stAppViewContainer"]');
-                    if (appView) appView.scrollTop = 0;
-                } catch (e) {}
-            }
-            setTimeout(tryScroll, 60);
-            setTimeout(tryScroll, 250);
-            setTimeout(tryScroll, 600);
-        </script>
-        """
-    )
-
-# ========== 1. 加载数据 ==========
+# ========== 加载数据 ==========
 @st.cache_data(show_spinner=False)
 def load_data(path):
     return pd.read_csv(path, encoding='gb18030', low_memory=False)
@@ -86,12 +71,12 @@ FILE_PATH = '大众点评评论数据.csv'
 try:
     df_raw = load_data(FILE_PATH)
 except FileNotFoundError:
-    st.error(f"找不到数据文件：{FILE_PATH}。请确认文件与 app.py 在同一目录下。")
+    st.error(f"找不到数据文件：{FILE_PATH}")
     st.stop()
 
 st.success(f"数据加载成功，共 {len(df_raw)} 条评论")
 
-# ========== 2. 清洗标签 ==========
+# ========== 清洗标签 ==========
 df = df_raw[['Content_review', 'Rating']].rename(
     columns={'Content_review': 'review', 'Rating': 'label'}
 )
@@ -100,62 +85,45 @@ df['review'] = df['review'].astype(str)
 df = df[df['label'] != 3].reset_index(drop=True)
 df['label'] = df['label'].apply(lambda x: 1 if x >= 4 else 0)
 
-# ========== 3. 全量分词（只做一次，带缓存） ==========
-stopwords = set(['的','了','还','很','也','就','都','和','与','在','是','有','一','个','这','那','不','我','你','他','她','它','们','但','而','且','或','被','把','给','让','从','到','对','为','以','于','之','其','此','该','等','着','过','吗','呢','吧','啊','呀','哦','嗯','这个','那个','什么','怎么','可以','没有','不是'])
+# 关键：限制最大数据量，避免 Cloud 内存爆掉
+MAX_ROWS = 30000
+if len(df) > MAX_ROWS:
+    df = df.sample(n=MAX_ROWS, random_state=42).reset_index(drop=True)
 
-def _tokenize(text):
-    text = re.sub(r'[^\u4e00-\u9fa5]', '', str(text))
-    return [w for w in jieba.cut(text) if w not in stopwords and len(w) > 1]
-
-@st.cache_data(show_spinner="首次分词中，请稍候（之后拖滑块将秒回）...")
-def preprocess_all(reviews_tuple):
-    tokens_list = [_tokenize(r) for r in reviews_tuple]
-    cleans = [' '.join(ws) for ws in tokens_list]
-    return tokens_list, cleans
-
-with st.spinner("正在准备数据..."):
-    tokens_list, cleans = preprocess_all(tuple(df['review'].tolist()))
-    df['tokens'] = tokens_list
-    df['clean'] = cleans
-
-with st.expander("查看预处理示例"):
-    for i in range(min(3, len(df))):
-        st.write(f"**原文**：{df['review'].iloc[i][:80]}...")
-        st.write(f"**清洗**：{df['clean'].iloc[i][:80]}...")
-        st.write("---")
-
-# ========== 4. 采样（滑块只影响这里） ==========
+# ========== 采样 ==========
 sample_size = st.sidebar.slider("采样数量", min_value=1000, max_value=20000, value=5000, step=1000)
-
-if st.session_state.last_sample_size is not None and \
-   st.session_state.last_sample_size != sample_size:
-    st.session_state.need_scroll_top = True
-st.session_state.last_sample_size = sample_size
-
-pos_all = df[df['label'] == 1]
-neg_all = df[df['label'] == 0]
-
 if len(df) > sample_size:
-    max_pos = sample_size - len(neg_all) if len(neg_all) < sample_size else sample_size // 2
-    n_pos = max(1, min(len(pos_all), max_pos))
-    n_neg = max(1, min(len(neg_all), sample_size - n_pos))
-    df_used = pd.concat([
-        pos_all.sample(n=n_pos, random_state=42),
-        neg_all.sample(n=n_neg, random_state=42),
-    ]).sample(frac=1, random_state=42).reset_index(drop=True)
+    df_used = df.sample(n=sample_size, random_state=42).reset_index(drop=True)
 else:
     df_used = df.reset_index(drop=True)
 
 st.write(f"当前使用数据：**{len(df_used)}** 条")
 st.write(f"好评：**{len(df_used[df_used['label']==1])}** 条 ｜ 差评：**{len(df_used[df_used['label']==0])}** 条")
 
-# ========== 5. 情感分类 ==========
+# ========== 分词（只对采样数据做） ==========
+stopwords = set(['的','了','还','很','也','就','都','和','与','在','是','有','一','个','这','那','不','我','你','他','她','它','们','但','而','且','或','被','把','给','让','从','到','对','为','以','于','之','其','此','该','等','着','过','吗','呢','吧','啊','呀','哦','嗯','这个','那个','什么','怎么','可以','没有','不是'])
+
+def _tokenize(text):
+    text = re.sub(r'[^\u4e00-\u9fa5]', '', str(text))
+    return [w for w in jieba.cut(text) if w not in stopwords and len(w) > 1]
+
+with st.spinner("正在分词..."):
+    df_used['tokens'] = df_used['review'].apply(_tokenize)
+    df_used['clean'] = df_used['tokens'].apply(lambda ws: ' '.join(ws))
+
+with st.expander("查看预处理示例"):
+    for i in range(min(3, len(df_used))):
+        st.write(f"**原文**：{df_used['review'].iloc[i][:80]}...")
+        st.write(f"**清洗**：{df_used['clean'].iloc[i][:80]}...")
+        st.write("---")
+
+# ========== 情感分类 ==========
 st.header("一、情感分类")
 
 X_train, X_test, y_train, y_test = train_test_split(
-    df_used['clean'], df_used['label'], test_size=0.3, random_state=42, stratify=df_used['label']
+    df_used['clean'], df_used['label'], test_size=0.3, random_state=42,
+    stratify=df_used['label']
 )
-
 vectorizer = TfidfVectorizer(max_features=5000)
 X_train_vec = vectorizer.fit_transform(X_train)
 X_test_vec = vectorizer.transform(X_test)
@@ -163,7 +131,6 @@ X_test_vec = vectorizer.transform(X_test)
 clf = LogisticRegression(class_weight='balanced', max_iter=300, solver='liblinear')
 clf.fit(X_train_vec, y_train)
 y_pred = clf.predict(X_test_vec)
-
 report = classification_report(y_test, y_pred, target_names=['差评', '好评'], zero_division=0)
 
 # ---- 板块 A ----
@@ -179,7 +146,6 @@ with col_text1:
         f"- 好评：**{real_pos}** 条\n"
         f"- 差评：**{real_neg}** 条"
     )
-    st.caption("右图统计的是当前采样的数据，不涉及系统判断对错。")
 with col_img1:
     fig1, ax1 = plt.subplots(figsize=(5, 3))
     bars = ax1.bar(['好评', '差评'], [real_pos, real_neg],
@@ -213,11 +179,11 @@ with col_text2:
         f"- 准确度：**{acc:.1%}**"
     )
     if acc >= 0.9:
-        st.success("😄 准确度很高，结果可以放心参考。")
+        st.success("😄 准确度很高。")
     elif acc >= 0.8:
-        st.info("🙂 准确度不错，结果基本可靠。")
+        st.info("🙂 准确度不错。")
     else:
-        st.warning("😐 准确度一般，建议结合原文一起看。")
+        st.warning("😐 准确度一般。")
 with col_img2:
     fig2, ax2 = plt.subplots(figsize=(5, 3))
     bars2 = ax2.bar(['判对', '判错'], [correct_total, wrong_total],
@@ -250,17 +216,12 @@ with st.expander("📊 详细指标可视化（精确率 / 召回率 / F1）"):
         st.markdown(
             "- **精确率**：系统说是某一类的，有多少是真的\n"
             "- **召回率**：真实的某一类，有多少被找出来\n"
-            "- **F1**：精确率和召回率的综合分，越高越好"
+            "- **F1**：精确率和召回率的综合分"
         )
         st.markdown(
             f"**好评**：精确率 {prec_pos:.1%}，召回率 {rec_pos:.1%}，F1 {f1_pos:.1%}\n\n"
             f"**差评**：精确率 {prec_neg:.1%}，召回率 {rec_neg:.1%}，F1 {f1_neg:.1%}"
         )
-        if rec_neg < 0.3:
-            st.warning("⚠️ 差评召回率偏低，可尝试继续增加差评样本。")
-        else:
-            st.success("✅ 差评召回率正常，模型已能识别大部分差评。")
-
     with col_chart:
         metrics = ['精确率', '召回率', 'F1']
         pos_scores = [prec_pos, rec_pos, f1_pos]
@@ -288,7 +249,7 @@ with st.expander("📊 详细指标可视化（精确率 / 召回率 / F1）"):
     with st.expander("查看原始分类报告文本"):
         st.code(report)
 
-# ========== 6. 优缺点抽取（复用已分好的 tokens） ==========
+# ========== 优缺点抽取 ==========
 st.header("二、优缺点抽取")
 
 aspect_dict = {
@@ -338,13 +299,12 @@ def extract_aspects_from_tokens(words):
                             break
     return results
 
-with st.spinner("正在抽取优缺点..."):
-    pos_aspects = []
-    for tokens in df_used[df_used['label']==1]['tokens']:
-        pos_aspects.extend(extract_aspects_from_tokens(tokens))
-    neg_aspects = []
-    for tokens in df_used[df_used['label']==0]['tokens']:
-        neg_aspects.extend(extract_aspects_from_tokens(tokens))
+pos_aspects = []
+for tokens in df_used[df_used['label']==1]['tokens']:
+    pos_aspects.extend(extract_aspects_from_tokens(tokens))
+neg_aspects = []
+for tokens in df_used[df_used['label']==0]['tokens']:
+    neg_aspects.extend(extract_aspects_from_tokens(tokens))
 
 pos_detail = defaultdict(Counter)
 for aspect, direction, word in pos_aspects:
@@ -372,7 +332,7 @@ with col2:
         phrases = [f"{aspect}{w}" for w, c in wc.most_common(3)]
         st.write(f"- **{aspect}**（提及 {total} 次）：{'、'.join(phrases)}")
 
-# ========== 7. 可视化 ==========
+# ========== 可视化 ==========
 st.header("三、可视化分析")
 all_aspects = sorted(set(list(pos_detail.keys()) + list(neg_detail.keys())))
 if all_aspects:
@@ -384,7 +344,7 @@ if all_aspects:
     col_desc1, col_img1b = st.columns([1, 2])
     with col_desc1:
         st.markdown("**各属性提及次数对比**")
-        st.markdown("柱状图展示每个属性在好评和差评中被提到的次数。深橙色代表好评，浅橙色代表差评。")
+        st.markdown("柱状图展示每个属性在好评和差评中被提到的次数。")
     with col_img1b:
         fig4, ax4 = plt.subplots(figsize=(6, 3.2))
         ax4.bar(x - width/2, pos_vals, width, label='好评提及', color='#FF6B35')
@@ -400,7 +360,7 @@ if all_aspects:
     col_desc2, col_img2b = st.columns([1, 2])
     with col_desc2:
         st.markdown("**属性情感雷达图**")
-        st.markdown("雷达图从多个维度对比好评与差评。橙色区域越往外，说明该属性在好评中被提及得越多。")
+        st.markdown("雷达图从多个维度对比好评与差评。")
     with col_img2b:
         angles = np.linspace(0, 2*np.pi, len(all_aspects), endpoint=False).tolist()
         pos_vals_r = pos_vals + [pos_vals[0]]
@@ -418,17 +378,7 @@ if all_aspects:
         plt.tight_layout()
         show_chart_with_zoom(fig5, key="zoom_radar")
 else:
-    st.warning("未抽取到任何属性，可能是属性词典与数据不匹配。")
+    st.warning("未抽取到任何属性。")
 
 st.markdown("---")
 st.caption("课程项目 · 基于大众点评评论的优缺点挖掘与可视化")
-
-# ========== 8. 页面末尾：滑块变化后回到顶部 ==========
-if st.session_state.get("need_scroll_top"):
-    scroll_to_top()
-    st.session_state.need_scroll_top = False
-
-# ========== 8. 页面末尾：滑块变化后回到顶部 ==========
-if st.session_state.get("need_scroll_top"):
-    scroll_to_top()
-    st.session_state.need_scroll_top = False
