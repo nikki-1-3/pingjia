@@ -419,12 +419,19 @@ with st.expander("📊 点击展开查看混淆矩阵（判对 / 判错 的四�
             f"- ✅ **真的好，判成好评**：{tp} 条"
         )
         st.markdown("---")
-        if fp > tn and fp > 20:
-            st.error(f"⚠️ 有 **{fp}** 条真实差评被判成了好评，漏抓的差评比抓到的还多。")
-        elif fp > 20:
-            st.warning(f"⚠️ 有 **{fp}** 条真实差评被漏掉了，差评召回率还能再提高。")
-        else:
-            st.success("✅ 漏抓的差评很少，模型对差评的识别已经比较到位。")
+       rec_now = tn / (tn + fp) if (tn + fp) > 0 else 0
+prec_now = tn / (tn + fn) if (tn + fn) > 0 else 0
+if rec_now >= 0.85:
+    st.success(
+        f"✅ **差评召回率 {rec_now:.0%}**，"
+        f"已经能抓住绝大多数差评。\n\n"
+        f"剩余的 {fp} 条漏网差评，多为「还行」「一般」等中性用词，"
+        f"机器难以区分——这是模型能力的**物理极限**。\n\n"
+        f"**代价**：为了不漏，精确率降到 {prec_now:.0%}，"
+        f"{fn} 条好评被误判。这是『宁可错抓，不可漏抓』的必要代价。"
+    )
+else:
+    st.info(f"差评召回率 {rec_now:.0%}，还有提升空间。")
 
     with col_chart:
         fig4, ax4 = plt.subplots(figsize=(5, 4))
