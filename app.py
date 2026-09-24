@@ -170,14 +170,12 @@ st.sidebar.success(
 )
 
 # ===== 三个模型各自训练 =====
-# 模型 1：LogisticRegression
 clf_lr = LogisticRegression(
     class_weight={0: 5.0, 1: 1.0}, max_iter=1000, solver='liblinear'
 )
 clf_lr.fit(X_train_vec_up, y_train_up)
 proba_lr = clf_lr.predict_proba(X_test_vec)[:, 1]
 
-# 模型 2：SGDClassifier（hinge loss，类似线性 SVM）
 clf_sgd = SGDClassifier(
     loss='hinge',
     class_weight={0: 5.0, 1: 1.0},
@@ -185,26 +183,63 @@ clf_sgd = SGDClassifier(
     random_state=42
 )
 clf_sgd.fit(X_train_vec_up, y_train_up)
-# SGD 没有 predict_proba，用 decision_function
 score_sgd = clf_sgd.decision_function(X_test_vec)
 
-# 模型 3：ComplementNB（专门针对不平衡数据的朴素贝叶斯）
 clf_cnb = ComplementNB(alpha=0.5)
 clf_cnb.fit(X_train_vec_up, y_train_up)
 proba_cnb = clf_cnb.predict_proba(X_test_vec)[:, 1]
 
-# ===== 混合投票：任一模型判差评 → 判差评 =====
-THRESHOLD_LR = 0.07
-THRESHOLD_SGD = 0.0     # decision_function > 0 判好评
-THRESHOLD_CNB = 0.10
+# ===== 投票过半：至少 2/3 判差评，才判差评 =====
+THRESHOLD_LR = 0.15
+THRESHOLD_SGD = 0.0
+THRESHOLD_CNB = 0.20
 
-pred_lr  = (proba_lr  < THRESHOLD_LR).astype(int)     # 0=差评
+pred_lr  = (proba_lr  < THRESHOLD_LR).astype(int)
 pred_sgd = (score_sgd < THRESHOLD_SGD).astype(int)
 pred_cnb = (proba_cnb < THRESHOLD_CNB).astype(int)
 
-# "或"逻辑：任一模型判差评，就判差评
-y_pred = (pred_lr & pred_sgd & pred_cnb).astype(int)
+vote_neg = (1 - pred_lr) + (1 - pred_sgd) + (1 - pred_cnb)
+y_pred = (vote_neg >= 2).astype(int)
 
+n_lr  = (pred_lr == 0).sum()
+n_sgd = (pred_sgd == 0).sum()
+n_cnb = (pred_cnb == 0).sum()
+st.sidebar.info(
+    f"📊 各模型判差评数：\n"
+    f"- LogReg: {n_lr}\n"
+    f"- SGD: {n_sgd}\n"
+    f"- ComplementNB: {n_cnb}\n"
+    f"- **投票后：{int((y_pred == 0).sum())}**"
+)
+
+# ===== 硬规则兜底 =====
+STRONG_NEG = [
+    '难吃', '不好吃', '太咸', '太淡', '太辣', '太甜', '太油', '太腻', '腥', '异味',
+    '不新鲜', '变质', '馊', '难以下咽',
+    '脏', '太吵', '很吵', '环境差', '不卫生', '乱',
+    '服务差', '态度差', '态度不好', '不理人', '冷漠', '催了', '等了很久', '等太久',
+    '太贵', '不值', '坑', '宰客', '贵死', '性价比低',
+    '失望', '差评', '再也不来', '不推荐', '踩雷', '拉黑', '恶心', '糟糕',
+    '不会再', '很差', '不行', '烂', '别来', '避雷',
+    '一般', '还行吧', '不太', '有点', '稍微', '勉强', '凑合', '一般般',
+    '没什么', '没有特别', '不算', '不太行', '就那么', '普通',
+    '没什么味道', '不太新鲜', '不太干净', '不太热情', '一般般吧',
+    '不如', '比不上', '没有以前', '也就那样', '只能算',
+    '有点失望', '略贵', '小贵', '偏贵', '偏咸', '偏淡',
+    '不太推荐', '不会再点', '不怎么样', '不太满意',
+    '等了半小时', '等了一小时', '等了很久',
+    '环境一般', '服务一般', '味道一般', '分量少', '分量小',
+]
+X_test_list = list(X_test)
+hard_hits = 0
+for i, text in enumerate(X_test_list):
+    if any(kw in text for kw in STRONG_NEG):
+        if y_pred[i] != 0:
+            hard_hits += 1
+        y_pred[i] = 0
+
+if hard_hits > 0:
+    st.sidebar.info(f"🔧 硬规则修正了 {hard_hits} 条漏判差评")
 # 统计各模型判差评数
 n_lr  = (pred_lr == 0).sum()
 n_sgd = (pred_sgd == 0).sum()
