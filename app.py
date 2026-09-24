@@ -111,30 +111,33 @@ y_pred = clf.predict(X_test_vec)
 report = classification_report(y_test, y_pred, target_names=['差评','好评'], zero_division=0)
 
 # 文字和图片同行
-from sklearn.metrics import accuracy_score, precision_score, recall_score
+from sklearn.metrics import accuracy_score
 
-# ========== 第一块：只讲判断结果（好评/差评各判对多少） ==========
-st.subheader("📋 判断结果")
+# ========================================================
+# 板块 A：情感分类 —— 只看"评价好坏"的判断结果
+# ========================================================
+st.subheader("A. 评价好坏：判断结果")
 
 real_pos = int((y_test == 1).sum())
 real_neg = int((y_test == 0).sum())
 correct_pos = int(((y_test == 1) & (y_pred == 1)).sum())
 correct_neg = int(((y_test == 0) & (y_pred == 0)).sum())
+wrong_pos = real_pos - correct_pos
+wrong_neg = real_neg - correct_neg
 
-# 用两行文字分别说清楚，不堆术语
 st.markdown(
-    f"一共测了 **{len(y_test)}** 条评论："
+    f"共 **{len(y_test)}** 条评论参与判断："
     f"真实好评 **{real_pos}** 条，真实差评 **{real_neg}** 条。"
 )
 st.markdown(
-    f"- 好评里，系统判对 **{correct_pos}** 条，判错 **{real_pos - correct_pos}** 条\n"
-    f"- 差评里，系统判对 **{correct_neg}** 条，判错 **{real_neg - correct_neg}** 条"
+    f"- 好评：判对 **{correct_pos}** 条，判错 **{wrong_pos}** 条\n"
+    f"- 差评：判对 **{correct_neg}** 条，判错 **{wrong_neg}** 条"
 )
 
-# 图：好评、差评各自判对/判错
+# 图：好评 / 差评 各自判对判错
 labels = ['好评', '差评']
 correct_counts = [correct_pos, correct_neg]
-wrong_counts = [real_pos - correct_pos, real_neg - correct_neg]
+wrong_counts = [wrong_pos, wrong_neg]
 
 x = np.arange(len(labels))
 w = 0.38
@@ -160,22 +163,22 @@ st.pyplot(fig1)
 
 st.markdown("---")
 
-# ========== 第二块：只讲准确率 ==========
-st.subheader("🎯 准确率")
+# ========================================================
+# 板块 B：判断准确度 —— 只讲"准不准"
+# ========================================================
+st.subheader("B. 判断准确度")
 
 acc = accuracy_score(y_test, y_pred)
 
-st.markdown(
-    f"系统整体判断对了 **{acc:.1%}** 的评论。"
-)
+st.markdown(f"系统整体判断对了 **{acc:.1%}** 的评论。")
 st.progress(min(acc, 1.0), text=f"{acc:.1%}")
 
 if acc >= 0.9:
-    st.success("😄 准确率很高，结果可以放心参考。")
+    st.success("😄 准确度很高，结果可以放心参考。")
 elif acc >= 0.8:
-    st.info("🙂 准确率不错，结果基本可靠。")
+    st.info("🙂 准确度不错，结果基本可靠。")
 else:
-    st.warning("😐 准确率一般，建议结合原文一起看。")
+    st.warning("😐 准确度一般，建议结合原文一起看。")
 
 with st.expander("想看更细的指标（可选）"):
     st.code(report)
