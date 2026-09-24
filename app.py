@@ -5,11 +5,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 from collections import Counter, defaultdict
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.naive_bayes import MultinomialNB
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report, confusion_matrix
-import seaborn as sns
+from sklearn.metrics import classification_report, accuracy_score, precision_score, recall_score, f1_score
+from sklearn.linear_model import LogisticRegression
 import streamlit as st
+import streamlit.components.v1 as components
 
 # ========== 页面配置 ==========
 st.set_page_config(page_title="大众点评评论优缺点总结", page_icon="🍽️", layout="wide")
@@ -36,12 +36,38 @@ st.markdown("""
 st.title("🍽️ 大众点评评论优缺点总结系统")
 st.markdown("基于情感分类与属性抽取的餐饮评论分析工具")
 
-# 中文字体（Streamlit Cloud 上 SimHei 可能不存在，做兜底）
+# 中文字体
 plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'DejaVu Sans']
 plt.rcParams['axes.unicode_minus'] = False
 plt.rcParams['font.size'] = 8
 
-# ========== 1. 加载数据集（带缓存） ==========
+# ========== 通用工具：放大查看 ==========
+@st.dialog("🔍 放大查看", width="large")
+def show_big(fig):
+    st.pyplot(fig)
+
+def show_chart_with_zoom(fig, key):
+    st.pyplot(fig)
+    if st.button("🔍 放大查看", key=key, use_container_width=True):
+        show_big(fig)
+
+# ========== 回到顶部工具 ==========
+if "last_sample_size" not in st.session_state:
+    st.session_state.last_sample_size = None
+
+def scroll_to_top():
+    components.html(
+        """
+        <script>
+            setTimeout(() => {
+                window.parent.scrollTo({top: 0, behavior: 'smooth'});
+            }, 80);
+        </script>
+        """,
+        height=0,
+    )
+
+# ========== 1. 加载数据集 ==========
 @st.cache_data
 def load_data(path):
     df = pd.read_csv(path, encoding='gb18030', low_memory=False)
@@ -69,6 +95,14 @@ df = df[df['label'] != 3]
 df['label'] = df['label'].apply(lambda x: 1 if x >= 4 else 0)
 
 sample_size = st.sidebar.slider("采样数量", min_value=1000, max_value=20000, value=5000, step=1000)
+
+# 滑块变化后回到页面顶部
+if st.session_state.last_sample_size is not None and \
+   st.session_state.last_sample_size != sample_size:
+    scroll_to_top()
+
+st.session_state.last_sample_size = sample_size
+
 if len(df) > sample_size:
     df = df.sample(n=sample_size, random_state=42).reset_index(drop=True)
 
@@ -94,10 +128,8 @@ with st.expander("查看预处理示例"):
         st.write("---")
 
 # ========== 4. 情感分类 ==========
-# ========== 4. 情感分类 ==========
 st.header("一、情感分类")
 
-# -------- 划分训练 / 测试集 --------
 X_train, X_test, y_train, y_test = train_test_split(
     df['clean'], df['label'], test_size=0.3, random_state=42, stratify=df['label']
 )
@@ -106,30 +138,15 @@ vectorizer = TfidfVectorizer(max_features=5000)
 X_train_vec = vectorizer.fit_transform(X_train)
 X_test_vec = vectorizer.transform(X_test)
 
-# -------- 关键改动：用带类别权重的逻辑回归，解决差评全漏问题 --------
-from sklearn.linear_model import LogisticRegression
+# 关键：带类别权重的逻辑回归，能识别差评
 clf = LogisticRegression(class_weight='balanced', max_iter=1000)
 clf.fit(X_train_vec, y_train)
 y_pred = clf.predict(X_test_vec)
 
 report = classification_report(y_test, y_pred, target_names=['差评', '好评'], zero_division=0)
 
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
-
 # ========================================================
-# 辅助函数：图 + 放大按钮（点击弹出全屏）
-# ========================================================
-@st.dialog("🔍 放大查看", width="large")
-def show_big(fig):
-    st.pyplot(fig)
-
-def show_chart_with_zoom(fig, key):
-    st.pyplot(fig)
-    if st.button("🔍 放大查看", key=key, use_container_width=True):
-        show_big(fig)
-
-# ========================================================
-# 板块 A：评价好坏 —— 用全部数据，只看评论本身
+# 板块 A：评价好坏 —— 用全部数据
 # ========================================================
 st.subheader("A. 评价好坏：数据构成")
 
@@ -165,7 +182,7 @@ with col_img1:
 st.markdown("---")
 
 # ========================================================
-# 板块 B：判断准确度 —— 用测试集，只看整体准不准
+# 板块 B：判断准确度 —— 用测试集
 # ========================================================
 st.subheader("B. 判断准确度：整体表现")
 
@@ -208,7 +225,7 @@ with col_img2:
 st.progress(min(acc, 1.0), text=f"准确度 {acc:.1%}")
 
 # ========================================================
-# 板块一附加：详细指标可视化（精确率 / 召回率 / F1）
+# 板块一附加：详细指标可视化
 # ========================================================
 with st.expander("📊 详细指标可视化（精确率 / 召回率 / F1）"):
     prec_neg = precision_score(y_test, y_pred, pos_label=0, zero_division=0)
@@ -232,7 +249,6 @@ with st.expander("📊 详细指标可视化（精确率 / 召回率 / F1）"):
             f"**好评**：精确率 {prec_pos:.1%}，召回率 {rec_pos:.1%}，F1 {f1_pos:.1%}\n\n"
             f"**差评**：精确率 {prec_neg:.1%}，召回率 {rec_neg:.1%}，F1 {f1_neg:.1%}"
         )
-        # 智能提示：改好后应该不会再触发
         if rec_neg < 0.3:
             st.warning(
                 "⚠️ 差评召回率仍然偏低，说明部分差评没被识别出来。"
@@ -268,6 +284,7 @@ with st.expander("📊 详细指标可视化（精确率 / 召回率 / F1）"):
 
     with st.expander("查看原始分类报告文本"):
         st.code(report)
+
 # ========== 5. 优缺点抽取 ==========
 st.header("二、优缺点抽取")
 
@@ -377,45 +394,45 @@ if all_aspects:
     x = np.arange(len(all_aspects))
     width = 0.35
 
-    # 柱状图与说明同行
-    col_desc1, col_img1 = st.columns([1, 2])
+    # 柱状图
+    col_desc1, col_img1b = st.columns([1, 2])
     with col_desc1:
         st.markdown("**各属性提及次数对比**")
-        st.markdown("柱状图展示每个属性在好评和差评中被提到的次数。绿色代表好评，红色代表差评，柱子越高说明该属性被讨论得越多。")
-    with col_img1:
-        fig2, ax2 = plt.subplots(figsize=(6, 3.2))
-        ax2.bar(x - width/2, pos_vals, width, label='好评提及', color='#FF6B35')
-        ax2.bar(x + width/2, neg_vals, width, label='差评提及', color='#FFB088')
-        ax2.set_xticks(x)
-        ax2.set_xticklabels(all_aspects, rotation=15, fontsize=8)
-        ax2.set_ylabel('提及次数', fontsize=8)
-        ax2.set_title('各属性在好评/差评中的提及次数对比', fontsize=9)
-        ax2.legend(fontsize=8)
+        st.markdown("柱状图展示每个属性在好评和差评中被提到的次数。深橙色代表好评，浅橙色代表差评，柱子越高说明该属性被讨论得越多。")
+    with col_img1b:
+        fig4, ax4 = plt.subplots(figsize=(6, 3.2))
+        ax4.bar(x - width/2, pos_vals, width, label='好评提及', color='#FF6B35')
+        ax4.bar(x + width/2, neg_vals, width, label='差评提及', color='#FFB088')
+        ax4.set_xticks(x)
+        ax4.set_xticklabels(all_aspects, rotation=15, fontsize=8)
+        ax4.set_ylabel('提及次数', fontsize=8)
+        ax4.set_title('各属性在好评/差评中的提及次数对比', fontsize=9)
+        ax4.legend(fontsize=8)
         plt.tight_layout()
-        st.pyplot(fig2)
+        show_chart_with_zoom(fig4, key="zoom_bar")
 
-    # 雷达图与说明同行
-    col_desc2, col_img2 = st.columns([1, 2])
+    # 雷达图
+    col_desc2, col_img2b = st.columns([1, 2])
     with col_desc2:
         st.markdown("**属性情感雷达图**")
         st.markdown("雷达图从多个维度对比好评与差评的分布。橙色区域越往外，说明该属性在好评中被提及得越多；浅色区域代表差评。")
-    with col_img2:
+    with col_img2b:
         angles = np.linspace(0, 2*np.pi, len(all_aspects), endpoint=False).tolist()
         pos_vals_r = pos_vals + [pos_vals[0]]
         neg_vals_r = neg_vals + [neg_vals[0]]
         angles_r = angles + [angles[0]]
 
-        fig3, ax3 = plt.subplots(figsize=(4, 4), subplot_kw=dict(polar=True))
-        ax3.plot(angles_r, pos_vals_r, 'o-', linewidth=2, label='好评', color='#FF6B35')
-        ax3.fill(angles_r, pos_vals_r, alpha=0.25, color='#FF6B35')
-        ax3.plot(angles_r, neg_vals_r, 'o-', linewidth=2, label='差评', color='#FFB088')
-        ax3.fill(angles_r, neg_vals_r, alpha=0.25, color='#FFB088')
-        ax3.set_xticks(angles)
-        ax3.set_xticklabels(all_aspects, fontsize=8)
-        ax3.set_title('属性情感雷达图', fontsize=9)
-        ax3.legend(loc='upper right', bbox_to_anchor=(1.3, 1.1), fontsize=8)
+        fig5, ax5 = plt.subplots(figsize=(4, 4), subplot_kw=dict(polar=True))
+        ax5.plot(angles_r, pos_vals_r, 'o-', linewidth=2, label='好评', color='#FF6B35')
+        ax5.fill(angles_r, pos_vals_r, alpha=0.25, color='#FF6B35')
+        ax5.plot(angles_r, neg_vals_r, 'o-', linewidth=2, label='差评', color='#FFB088')
+        ax5.fill(angles_r, neg_vals_r, alpha=0.25, color='#FFB088')
+        ax5.set_xticks(angles)
+        ax5.set_xticklabels(all_aspects, fontsize=8)
+        ax5.set_title('属性情感雷达图', fontsize=9)
+        ax5.legend(loc='upper right', bbox_to_anchor=(1.3, 1.1), fontsize=8)
         plt.tight_layout()
-        st.pyplot(fig3)
+        show_chart_with_zoom(fig5, key="zoom_radar")
 else:
     st.warning("未抽取到任何属性，可能是属性词典与数据不匹配。")
 
