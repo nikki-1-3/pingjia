@@ -10,7 +10,7 @@ from collections import Counter, defaultdict
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report, accuracy_score, precision_score, recall_score, f1_score
+from sklearn.metrics import classification_report, accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
 import streamlit as st
 
 # ========== 页面配置 ==========
@@ -37,10 +37,7 @@ FONT_CANDIDATES = [
     "/mount/src/pingjia/Ubuntu_18.04_SimHei.ttf",
     "/mount/src/pingjia/simhei.ttf",
     "/mount/src/pingjia/SimHei.ttf",
-    "/mount/src/pingjia/main/Ubuntu_18.04_SimHei.ttf",
-    "/mount/src/pingjia/main/simhei.ttf",
 ]
-
 FONT_PATH = None
 FONT_SIZE_MB = 0
 for p in FONT_CANDIDATES:
@@ -83,7 +80,7 @@ def show_chart_with_zoom(fig, key):
     if st.button("🔍 放大查看", key=key, use_container_width=True):
         show_big(fig)
 
-# ========== 1. 加载数据（从 LFS raw URL 下载） ==========
+# ========== 1. 加载数据 ==========
 CSV_URL = "https://media.githubusercontent.com/media/nikki-1-3/pingjia/refs/heads/main/%E5%A4%A7%E4%BC%97%E7%82%B9%E8%AF%84%E8%AF%84%E8%AE%BA%E6%95%B0%E6%8D%AE.csv"
 
 @st.cache_data(show_spinner="正在下载数据集（首次约几十 MB，请稍候）...")
@@ -144,10 +141,25 @@ vectorizer = TfidfVectorizer(max_features=5000)
 X_train_vec = vectorizer.fit_transform(X_train)
 X_test_vec = vectorizer.transform(X_test)
 
-# 关键：带类别权重的逻辑回归，能识别差评
+# ===== 过采样：训练集里的差评复制到和好评一样多 =====
+try:
+    from imblearn.over_sampling import RandomOverSampler
+    ros = RandomOverSampler(random_state=42)
+    X_train_vec, y_train = ros.fit_resample(X_train_vec, y_train)
+    over_sampled = True
+except ImportError:
+    over_sampled = False
+    st.sidebar.warning("未安装 imblearn，未启用过采样")
+
+# 训练
 clf = LogisticRegression(class_weight='balanced', max_iter=300, solver='liblinear')
 clf.fit(X_train_vec, y_train)
-y_pred = clf.predict(X_test_vec)
+
+# ===== 调整判定阈值 =====
+proba = clf.predict_proba(X_test_vec)
+THRESHOLD = 0.4
+y_pred = (proba[:, 1] >= THRESHOLD).astype(int)
+
 report = classification_report(y_test, y_pred, target_names=['差评', '好评'], zero_division=0)
 
 # ---- A. 评价好坏 ----
@@ -195,12 +207,6 @@ with col_text2:
         f"- 判错：**{wrong_total}** 条\n"
         f"- 准确度：**{acc:.1%}**"
     )
-    if acc >= 0.9:
-        st.success("😄 准确度很高，结果可以放心参考。")
-    elif acc >= 0.8:
-        st.info("🙂 准确度不错，结果基本可靠。")
-    else:
-        st.warning("😐 准确度一般，建议结合原文一起看。")
 with col_img2:
     fig2, ax2 = plt.subplots(figsize=(5, 3))
     bars2 = ax2.bar(['判对', '判错'], [correct_total, wrong_total],
@@ -224,44 +230,34 @@ st.subheader("C. 详细指标可视化")
 prec_pos = precision_score(y_test, y_pred, pos_label=1, zero_division=0)
 rec_pos  = recall_score(y_test, y_pred, pos_label=1, zero_division=0)
 f1_pos   = f1_score(y_test, y_pred, pos_label=1, zero_division=0)
-
 prec_neg = precision_score(y_test, y_pred, pos_label=0, zero_division=0)
 rec_neg  = recall_score(y_test, y_pred, pos_label=0, zero_division=0)
 f1_neg   = f1_score(y_test, y_pred, pos_label=0, zero_division=0)
 
 col_desc, col_chart = st.columns([1, 2])
-
 with col_desc:
     st.markdown("**三个指标分别是什么意思**")
     st.markdown(
         "- **精确率**：系统判为某一类的，有多少是真的\n"
         "- **召回率**：真实的某一类，有多少被系统找出来\n"
-        "- **F1**：精确率和召回率的综合分，越高越好"
+        "- **F1**：精确率和召回率的综合分"
     )
     st.markdown("---")
     st.markdown(
         f"**好评**：精确率 **{prec_pos:.0%}**，召回率 **{rec_pos:.0%}**，F1 **{f1_pos:.0%}**\n\n"
         f"**差评**：精确率 **{prec_neg:.0%}**，召回率 **{rec_neg:.0%}**，F1 **{f1_neg:.0%}**"
     )
-
-    if rec_neg < 0.1 and rec_pos > 0.9:
-        st.error(
-            "⚠️ **严重问题：差评一条都没识别出来**\n\n"
-            "系统把所有评论都判成了好评，高准确度是"
-            "『全押多数类』刷出来的，并不代表模型真的会分好坏。"
-        )
-    elif rec_neg < 0.3:
-        st.warning("⚠️ 差评召回率偏低，很多差评没被识别出来。")
+    if rec_neg < 0.3:
+        st.warning("⚠️ 差评召回率偏低，很多差评被漏掉。")
     elif rec_neg < 0.6:
         st.info("🙂 差评召回率一般，能识别一部分差评。")
     else:
-        st.success("✅ 差评召回率正常，模型已能识别大部分差评。")
+        st.success("✅ 差评召回率正常，模型能识别大部分差评。")
 
 with col_chart:
     metrics = ['精确率', '召回率', 'F1']
     pos_scores = [prec_pos, rec_pos, f1_pos]
     neg_scores = [prec_neg, rec_neg, f1_neg]
-
     x = np.arange(len(metrics))
     w = 0.38
     fig3, ax3 = plt.subplots(figsize=(5.5, 3.4))
@@ -285,6 +281,56 @@ with col_chart:
 with st.expander("查看原始分类报告文本"):
     st.code(report)
 
+# ---- D. 混淆矩阵可视化 ----
+st.markdown("---")
+st.subheader("D. 混淆矩阵：判对 / 判错 的四种情况")
+
+cm = confusion_matrix(y_test, y_pred)
+tn, fp, fn, tp = cm.ravel()
+
+col_desc, col_chart = st.columns([1, 2])
+with col_desc:
+    st.markdown("**这张图在说什么**")
+    st.markdown(
+        "矩阵里每一格代表系统判断的一种结果：\n\n"
+        f"- ✅ **真的差评，判成差评**：{tn} 条\n"
+        f"- ❌ **真的差评，判成好评**：{fp} 条（漏抓的差评）\n"
+        f"- ❌ **真的好，判成差评**：{fn} 条（误伤）\n"
+        f"- ✅ **真的好，判成好评**：{tp} 条"
+    )
+    st.markdown("---")
+    if fp > tn and fp > 20:
+        st.error(
+            f"⚠️ **漏抓的差评比抓到的还多**\n\n"
+            f"有 **{fp}** 条真实差评被判成了好评，"
+            f"而抓到的只有 **{tn}** 条。这些漏掉的差评就是"
+            f"『用户吐槽但系统没发现』的问题。"
+        )
+    elif fp > 20:
+        st.warning(f"⚠️ 有 **{fp}** 条真实差评被漏掉了，差评召回率还能再提高。")
+    else:
+        st.success("✅ 漏抓的差评很少，模型对差评的识别已经比较到位。")
+
+with col_chart:
+    fig6, ax6 = plt.subplots(figsize=(5, 4))
+    im = ax6.imshow(cm, cmap='Oranges', aspect='auto')
+    for i in range(2):
+        for j in range(2):
+            val = cm[i, j]
+            color = 'white' if val > cm.max() * 0.5 else 'black'
+            ax6.text(j, i, f'{val}', ha='center', va='center',
+                     color=color, fontsize=16, fontweight='bold')
+    ax6.set_xticks([0, 1])
+    ax6.set_xticklabels(['判成差评', '判成好评'], fontsize=10)
+    ax6.set_yticks([0, 1])
+    ax6.set_yticklabels(['真实差评', '真实好评'], fontsize=10)
+    ax6.set_xlabel('系统判断', fontsize=10)
+    ax6.set_ylabel('实际情况', fontsize=10)
+    ax6.set_title('混淆矩阵：四种判断结果', fontsize=11)
+    plt.colorbar(im, ax=ax6, fraction=0.046, pad=0.04)
+    plt.tight_layout()
+    show_chart_with_zoom(fig6, key="zoom_D")
+
 # ========== 5. 优缺点抽取 ==========
 st.header("二、优缺点抽取")
 
@@ -297,17 +343,15 @@ aspect_dict = {
     '分量': ['分量','份量','量','少','足','多','精致'],
 }
 pos_words = {
-    '多': '多', '足': '足', '大': '大', '好': '好', '不错': '不错',
-    '干净': '干净', '方便': '方便', '热情': '热情', '周到': '周到',
-    '舒适': '舒适', '满意': '满意', '棒': '棒', '优秀': '优秀',
-    '喜欢': '喜欢', '漂亮': '漂亮', '好吃': '好吃', '香': '香',
-    '实惠': '实惠', '快': '快', '新鲜': '新鲜', '美味': '美味', '赞': '赞'
+    '多':'多','足':'足','大':'大','好':'好','不错':'不错','干净':'干净','方便':'方便',
+    '热情':'热情','周到':'周到','舒适':'舒适','满意':'满意','棒':'棒','优秀':'优秀',
+    '喜欢':'喜欢','漂亮':'漂亮','好吃':'好吃','香':'香','实惠':'实惠','快':'快',
+    '新鲜':'新鲜','美味':'美味','赞':'赞'
 }
 neg_words = {
-    '少': '少', '小': '小', '差': '差', '脏': '脏', '吵': '吵',
-    '旧': '旧', '破': '破', '坏': '坏', '失望': '失望', '糟糕': '糟糕',
-    '难': '难', '远': '远', '贵': '贵', '慢': '慢', '难吃': '难吃',
-    '咸': '咸', '淡': '淡', '冷': '冷', '腻': '腻', '一般': '一般', '坑': '坑'
+    '少':'少','小':'小','差':'差','脏':'脏','吵':'吵','旧':'旧','破':'破','坏':'坏',
+    '失望':'失望','糟糕':'糟糕','难':'难','远':'远','贵':'贵','慢':'慢','难吃':'难吃',
+    '咸':'咸','淡':'淡','冷':'冷','腻':'腻','一般':'一般','坑':'坑'
 }
 
 def extract_aspects(text):
@@ -341,11 +385,9 @@ def extract_aspects(text):
 with st.spinner("正在抽取优缺点..."):
     pos_reviews = df[df['label'] == 1]['review']
     neg_reviews = df[df['label'] == 0]['review']
-
     pos_aspects = []
     for r in pos_reviews:
         pos_aspects.extend(extract_aspects(r))
-
     neg_aspects = []
     for r in neg_reviews:
         neg_aspects.extend(extract_aspects(r))
@@ -354,7 +396,6 @@ pos_detail = defaultdict(Counter)
 for aspect, direction, word in pos_aspects:
     if direction == '正面':
         pos_detail[aspect][word] += 1
-
 neg_detail = defaultdict(Counter)
 for aspect, direction, word in neg_aspects:
     if direction == '负面':
@@ -364,19 +405,17 @@ for aspect, direction, word in neg_aspects:
 col1, col2 = st.columns(2)
 with col1:
     st.subheader("✅ 优点")
-    for aspect, word_counter in sorted(pos_detail.items(), key=lambda x: -sum(x[1].values())):
-        total = sum(word_counter.values())
-        if total == 0:
-            continue
-        phrases = [f"{aspect}{w}" for w, c in word_counter.most_common(3)]
+    for aspect, wc in sorted(pos_detail.items(), key=lambda x: -sum(x[1].values())):
+        total = sum(wc.values())
+        if total == 0: continue
+        phrases = [f"{aspect}{w}" for w, c in wc.most_common(3)]
         st.write(f"- **{aspect}**（提及 {total} 次）：{'、'.join(phrases)}")
 with col2:
     st.subheader("❌ 缺点")
-    for aspect, word_counter in sorted(neg_detail.items(), key=lambda x: -sum(x[1].values())):
-        total = sum(word_counter.values())
-        if total == 0:
-            continue
-        phrases = [f"{aspect}{w}" for w, c in word_counter.most_common(3)]
+    for aspect, wc in sorted(neg_detail.items(), key=lambda x: -sum(x[1].values())):
+        total = sum(wc.values())
+        if total == 0: continue
+        phrases = [f"{aspect}{w}" for w, c in wc.most_common(3)]
         st.write(f"- **{aspect}**（提及 {total} 次）：{'、'.join(phrases)}")
 
 # ========== 7. 可视化 ==========
@@ -386,14 +425,13 @@ all_aspects = sorted(set(list(pos_detail.keys()) + list(neg_detail.keys())))
 if all_aspects:
     pos_vals = [sum(pos_detail.get(a, Counter()).values()) for a in all_aspects]
     neg_vals = [sum(neg_detail.get(a, Counter()).values()) for a in all_aspects]
-
     x = np.arange(len(all_aspects))
     width = 0.35
 
     col_desc1, col_img1b = st.columns([1, 2])
     with col_desc1:
         st.markdown("**各属性提及次数对比**")
-        st.markdown("柱状图展示每个属性在好评和差评中被提到的次数。深橙代表好评，浅橙代表差评。")
+        st.markdown("柱状图展示每个属性在好评和差评中被提到的次数。")
     with col_img1b:
         fig4, ax4 = plt.subplots(figsize=(6, 3.2))
         ax4.bar(x - width/2, pos_vals, width, label='好评提及', color='#FF6B35')
@@ -409,13 +447,12 @@ if all_aspects:
     col_desc2, col_img2b = st.columns([1, 2])
     with col_desc2:
         st.markdown("**属性情感雷达图**")
-        st.markdown("雷达图从多个维度对比好评与差评。橙色区域越往外，说明该属性在好评中被提及得越多。")
+        st.markdown("雷达图从多个维度对比好评与差评。")
     with col_img2b:
         angles = np.linspace(0, 2*np.pi, len(all_aspects), endpoint=False).tolist()
         pos_vals_r = pos_vals + [pos_vals[0]]
         neg_vals_r = neg_vals + [neg_vals[0]]
         angles_r = angles + [angles[0]]
-
         fig5, ax5 = plt.subplots(figsize=(4, 4), subplot_kw=dict(polar=True))
         ax5.plot(angles_r, pos_vals_r, 'o-', linewidth=2, label='好评', color='#FF6B35')
         ax5.fill(angles_r, pos_vals_r, alpha=0.25, color='#FF6B35')
@@ -428,7 +465,7 @@ if all_aspects:
         plt.tight_layout()
         show_chart_with_zoom(fig5, key="zoom_radar")
 else:
-    st.warning("未抽取到任何属性，可能是属性词典与数据不匹配。")
+    st.warning("未抽取到任何属性。")
 
 st.markdown("---")
 st.caption("课程项目 · 基于大众点评评论的优缺点挖掘与可视化")
