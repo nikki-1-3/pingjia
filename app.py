@@ -145,7 +145,7 @@ vectorizer = TfidfVectorizer(max_features=5000)
 X_train_vec = vectorizer.fit_transform(X_train)
 X_test_vec = vectorizer.transform(X_test)
 
-# ===== 手动过采样：差评复制到好评的 3 倍 =====
+# ===== 手动过采样：差评复制到好评的 5 倍 =====
 X_train_pos = X_train_vec[y_train == 1]
 X_train_neg = X_train_vec[y_train == 0]
 y_train_pos = y_train[y_train == 1]
@@ -155,7 +155,7 @@ n_pos = X_train_pos.shape[0]
 n_neg = X_train_neg.shape[0]
 
 if n_neg > 0 and n_pos > n_neg:
-    ratio = int(np.ceil(n_pos / n_neg * 3.0))   # 差评复制到好评的 3 倍
+    ratio = int(np.ceil(n_pos / n_neg * 5.0))   # 差评复制到好评的 5 倍
     X_train_neg_up = vstack([X_train_neg] * ratio)
     y_train_neg_up = np.tile(y_train_neg, ratio)
     X_train_vec = vstack([X_train_pos, X_train_neg_up])
@@ -164,23 +164,35 @@ if n_neg > 0 and n_pos > n_neg:
 else:
     st.sidebar.warning(f"⚠️ 过采样未启用：n_pos={n_pos}, n_neg={n_neg}")
 
-# 训练：差评权重加到 10 倍
+# 训练：差评权重 20 倍
 clf = LogisticRegression(
-    class_weight={0: 10.0, 1: 1.0},
+    class_weight={0: 20.0, 1: 1.0},
     max_iter=1000,
     solver='liblinear'
 )
 clf.fit(X_train_vec, y_train)
 
-# ===== 阈值降到 0.15，非常倾向判差评 =====
+# ===== 两层兜底 =====
+# 第 1 层：模型概率阈值极低（0.10）
 proba = clf.predict_proba(X_test_vec)
-THRESHOLD = 0.15
+THRESHOLD = 0.10
 y_pred = (proba[:, 1] >= THRESHOLD).astype(int)
 
-# ===== 硬规则补充：出现强差评关键词，直接判差评 =====
-STRONG_NEG = ['难吃', '太贵', '服务差', '态度差', '脏', '不新鲜',
-              '等太久', '失望', '坑', '差评', '再也不来', '拉黑',
-              '恶心', '难以下咽', '不推荐', '踩雷']
+# 第 2 层：硬规则，命中强差评词直接判差评
+STRONG_NEG = [
+    # 口味
+    '难吃', '不好吃', '太咸', '太淡', '太辣', '太甜', '太油', '太腻', '腥', '异味',
+    '不新鲜', '变质', '馊', '难以下咽',
+    # 环境
+    '脏', '太吵', '很吵', '环境差', '不卫生', '乱',
+    # 服务
+    '服务差', '态度差', '态度不好', '不理人', '冷漠', '催了', '等了很久', '等太久',
+    # 价格
+    '太贵', '不值', '坑', '宰客', '贵死', '性价比低',
+    # 综合/情绪
+    '失望', '差评', '再也不来', '不推荐', '踩雷', '拉黑', '恶心', '糟糕', '一般般',
+    '不会再', '很差', '不行', '烂', '别来', '避雷',
+]
 X_test_list = list(X_test)
 hard_hits = 0
 for i, text in enumerate(X_test_list):
@@ -279,12 +291,12 @@ with col_desc:
         f"**好评**：精确率 **{prec_pos:.0%}**，召回率 **{rec_pos:.0%}**，F1 **{f1_pos:.0%}**\n\n"
         f"**差评**：精确率 **{prec_neg:.0%}**，召回率 **{rec_neg:.0%}**，F1 **{f1_neg:.0%}**"
     )
-    if rec_neg < 0.3:
-        st.warning("⚠️ 差评召回率偏低，很多差评被漏掉。")
-    elif rec_neg < 0.6:
-        st.info("🙂 差评召回率一般，能识别一部分差评。")
+    if rec_neg < 0.6:
+        st.warning("⚠️ 差评召回率偏低，还有差评被漏掉。")
+    elif rec_neg < 0.8:
+        st.info("🙂 差评召回率不错，大部分差评能抓到。")
     else:
-        st.success("✅ 差评召回率正常，模型能识别大部分差评。")
+        st.success("✅ 差评召回率很高，差评几乎不漏。")
 
 with col_chart:
     metrics = ['精确率', '召回率', 'F1']
