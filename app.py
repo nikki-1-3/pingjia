@@ -8,9 +8,9 @@ import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
 from collections import Counter, defaultdict
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.naive_bayes import MultinomialNB
+from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report, accuracy_score
+from sklearn.metrics import classification_report, accuracy_score, precision_score, recall_score, f1_score
 import streamlit as st
 
 # ========== 页面配置 ==========
@@ -21,14 +21,6 @@ st.markdown("""
     .stApp { background-color: #FFF9F5; }
     h1, h2, h3 { color: #E85D2F !important; }
     section[data-testid="stSidebar"] { background-color: #FFF3EC; }
-    .stTabs [data-baseweb="tab-list"] { gap: 8px; }
-    .stTabs [data-baseweb="tab"] {
-        background-color: #FFE8DC;
-        border-radius: 8px 8px 0 0;
-        padding: 8px 16px;
-        color: #E85D2F;
-    }
-    .stTabs [aria-selected="true"] { background-color: #FF6B35; color: white; }
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
 </style>
@@ -92,8 +84,6 @@ def show_chart_with_zoom(fig, key):
         show_big(fig)
 
 # ========== 1. 加载数据（从 LFS raw URL 下载） ==========
-# 因为 CSV 走了 Git LFS，Cloud 克隆时只拿到几百字节的指针。
-# 直接用 media.githubusercontent.com 下载真实文件。
 CSV_URL = "https://media.githubusercontent.com/media/nikki-1-3/pingjia/refs/heads/main/%E5%A4%A7%E4%BC%97%E7%82%B9%E8%AF%84%E8%AF%84%E8%AE%BA%E6%95%B0%E6%8D%AE.csv"
 
 @st.cache_data(show_spinner="正在下载数据集（首次约几十 MB，请稍候）...")
@@ -154,7 +144,8 @@ vectorizer = TfidfVectorizer(max_features=5000)
 X_train_vec = vectorizer.fit_transform(X_train)
 X_test_vec = vectorizer.transform(X_test)
 
-clf = MultinomialNB()
+# 关键：带类别权重的逻辑回归，能识别差评
+clf = LogisticRegression(class_weight='balanced', max_iter=300, solver='liblinear')
 clf.fit(X_train_vec, y_train)
 y_pred = clf.predict(X_test_vec)
 report = classification_report(y_test, y_pred, target_names=['差评', '好评'], zero_division=0)
@@ -227,11 +218,8 @@ with col_img2:
 
 st.progress(min(acc, 1.0), text=f"准确度 {acc:.1%}")
 
-# ========== 详细指标可视化 ==========
+# ---- C. 详细指标可视化 ----
 st.subheader("C. 详细指标可视化")
-
-# 从 report 里解析出好评/差评的精确率、召回率、F1
-from sklearn.metrics import precision_score, recall_score, f1_score
 
 prec_pos = precision_score(y_test, y_pred, pos_label=1, zero_division=0)
 rec_pos  = recall_score(y_test, y_pred, pos_label=1, zero_division=0)
@@ -256,13 +244,11 @@ with col_desc:
         f"**差评**：精确率 **{prec_neg:.0%}**，召回率 **{rec_neg:.0%}**，F1 **{f1_neg:.0%}**"
     )
 
-    # 智能诊断
     if rec_neg < 0.1 and rec_pos > 0.9:
         st.error(
             "⚠️ **严重问题：差评一条都没识别出来**\n\n"
-            "系统把所有评论都判成了好评，94% 的准确度是"
+            "系统把所有评论都判成了好评，高准确度是"
             "『全押多数类』刷出来的，并不代表模型真的会分好坏。"
-            "差评全部漏掉，对『找缺点』这个目标来说是无效的。"
         )
     elif rec_neg < 0.3:
         st.warning("⚠️ 差评召回率偏低，很多差评没被识别出来。")
@@ -409,16 +395,16 @@ if all_aspects:
         st.markdown("**各属性提及次数对比**")
         st.markdown("柱状图展示每个属性在好评和差评中被提到的次数。深橙代表好评，浅橙代表差评。")
     with col_img1b:
-        fig3, ax3 = plt.subplots(figsize=(6, 3.2))
-        ax3.bar(x - width/2, pos_vals, width, label='好评提及', color='#FF6B35')
-        ax3.bar(x + width/2, neg_vals, width, label='差评提及', color='#FFB088')
-        ax3.set_xticks(x)
-        ax3.set_xticklabels(all_aspects, rotation=15, fontsize=8)
-        ax3.set_ylabel('提及次数', fontsize=8)
-        ax3.set_title('各属性在好评/差评中的提及次数对比', fontsize=9)
-        ax3.legend(fontsize=8)
+        fig4, ax4 = plt.subplots(figsize=(6, 3.2))
+        ax4.bar(x - width/2, pos_vals, width, label='好评提及', color='#FF6B35')
+        ax4.bar(x + width/2, neg_vals, width, label='差评提及', color='#FFB088')
+        ax4.set_xticks(x)
+        ax4.set_xticklabels(all_aspects, rotation=15, fontsize=8)
+        ax4.set_ylabel('提及次数', fontsize=8)
+        ax4.set_title('各属性在好评/差评中的提及次数对比', fontsize=9)
+        ax4.legend(fontsize=8)
         plt.tight_layout()
-        show_chart_with_zoom(fig3, key="zoom_bar")
+        show_chart_with_zoom(fig4, key="zoom_bar")
 
     col_desc2, col_img2b = st.columns([1, 2])
     with col_desc2:
@@ -430,17 +416,17 @@ if all_aspects:
         neg_vals_r = neg_vals + [neg_vals[0]]
         angles_r = angles + [angles[0]]
 
-        fig4, ax4 = plt.subplots(figsize=(4, 4), subplot_kw=dict(polar=True))
-        ax4.plot(angles_r, pos_vals_r, 'o-', linewidth=2, label='好评', color='#FF6B35')
-        ax4.fill(angles_r, pos_vals_r, alpha=0.25, color='#FF6B35')
-        ax4.plot(angles_r, neg_vals_r, 'o-', linewidth=2, label='差评', color='#FFB088')
-        ax4.fill(angles_r, neg_vals_r, alpha=0.25, color='#FFB088')
-        ax4.set_xticks(angles)
-        ax4.set_xticklabels(all_aspects, fontsize=8)
-        ax4.set_title('属性情感雷达图', fontsize=9)
-        ax4.legend(loc='upper right', bbox_to_anchor=(1.3, 1.1), fontsize=8)
+        fig5, ax5 = plt.subplots(figsize=(4, 4), subplot_kw=dict(polar=True))
+        ax5.plot(angles_r, pos_vals_r, 'o-', linewidth=2, label='好评', color='#FF6B35')
+        ax5.fill(angles_r, pos_vals_r, alpha=0.25, color='#FF6B35')
+        ax5.plot(angles_r, neg_vals_r, 'o-', linewidth=2, label='差评', color='#FFB088')
+        ax5.fill(angles_r, neg_vals_r, alpha=0.25, color='#FFB088')
+        ax5.set_xticks(angles)
+        ax5.set_xticklabels(all_aspects, fontsize=8)
+        ax5.set_title('属性情感雷达图', fontsize=9)
+        ax5.legend(loc='upper right', bbox_to_anchor=(1.3, 1.1), fontsize=8)
         plt.tight_layout()
-        show_chart_with_zoom(fig4, key="zoom_radar")
+        show_chart_with_zoom(fig5, key="zoom_radar")
 else:
     st.warning("未抽取到任何属性，可能是属性词典与数据不匹配。")
 
