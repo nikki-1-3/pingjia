@@ -40,7 +40,9 @@ plt.rcParams['axes.unicode_minus'] = False
 plt.rcParams['font.size'] = 8
 
 # ========== 通用工具：放大查看 ==========
-@st.dialog("🔍 放大查看", width="large")
+@st.experimental_dialog("🔍 放大查看")
+def show_big(fig):
+    st.pyplot(fig)
 def show_big(fig):
     st.pyplot(fig)
 
