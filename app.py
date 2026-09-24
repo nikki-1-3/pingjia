@@ -138,7 +138,7 @@ X_train, X_test, y_train, y_test = train_test_split(
     df['clean'], df['label'], test_size=0.3, random_state=42, stratify=df['label']
 )
 
-# 关键修复：把 y_train / y_test 转成 numpy 数组，避免后面稀疏矩阵索引报错
+# 关键修复：把 y_train / y_test 转成 numpy 数组
 y_train = np.asarray(y_train)
 y_test = np.asarray(y_test)
 
@@ -146,7 +146,7 @@ vectorizer = TfidfVectorizer(max_features=5000)
 X_train_vec = vectorizer.fit_transform(X_train)
 X_test_vec = vectorizer.transform(X_test)
 
-# ===== 手动过采样：把训练集里的差评复制到和好评一样多（不需要 imblearn） =====
+# ===== 手动过采样：把训练集里的差评复制到好评的 2 倍 =====
 X_train_pos = X_train_vec[y_train == 1]
 X_train_neg = X_train_vec[y_train == 0]
 y_train_pos = y_train[y_train == 1]
@@ -156,20 +156,26 @@ n_pos = X_train_pos.shape[0]
 n_neg = X_train_neg.shape[0]
 
 if n_neg > 0 and n_pos > n_neg:
-    ratio = int(np.ceil(n_pos / n_neg * 1.2))   # 差评复制到好评的 1.2 倍
+    ratio = int(np.ceil(n_pos / n_neg * 2.0))   # 差评复制到好评的 2 倍
     X_train_neg_up = vstack([X_train_neg] * ratio)
     y_train_neg_up = np.tile(y_train_neg, ratio)
     X_train_vec = vstack([X_train_pos, X_train_neg_up])
     y_train = np.concatenate([y_train_pos, y_train_neg_up])
-    st.sidebar.success(f"✅ 过采样：差评 {n_neg} → {X_train_neg_up.shape[0]} 条")
+    st.sidebar.success(f"✅ 过采样：差评 {n_neg} → {X_train_neg_up.shape[0]} 条（{ratio}倍）")
+else:
+    st.sidebar.warning(f"⚠️ 过采样未启用：n_pos={n_pos}, n_neg={n_neg}")
 
-# 训练
-clf = LogisticRegression(class_weight='balanced', max_iter=1000, solver='liblinear')
+# 训练：手动给差评加 5 倍权重
+clf = LogisticRegression(
+    class_weight={0: 5.0, 1: 1.0},   # 差评权重 5 倍
+    max_iter=1000,
+    solver='liblinear'
+)
 clf.fit(X_train_vec, y_train)
 
-# ===== 调整判定阈值 =====
+# ===== 阈值降到 0.25，更倾向判差评 =====
 proba = clf.predict_proba(X_test_vec)
-THRESHOLD = 0.35
+THRESHOLD = 0.25
 y_pred = (proba[:, 1] >= THRESHOLD).astype(int)
 
 report = classification_report(y_test, y_pred, target_names=['差评', '好评'], zero_division=0)
