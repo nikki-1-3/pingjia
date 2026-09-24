@@ -111,20 +111,66 @@ y_pred = clf.predict(X_test_vec)
 report = classification_report(y_test, y_pred, target_names=['差评','好评'], zero_division=0)
 
 # 文字和图片同行
-col_text, col_img = st.columns([1, 1])
-with col_text:
-    st.text("分类报告：")
+# 计算核心指标
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+
+acc = accuracy_score(y_test, y_pred)
+prec = precision_score(y_test, y_pred, zero_division=0)
+rec = recall_score(y_test, y_pred, zero_division=0)
+f1 = f1_score(y_test, y_pred, zero_division=0)
+
+# 用进度条直观展示"判断准确率"
+st.markdown("### 📊 系统判断得准不准？")
+st.markdown(
+    f"系统对 **{len(y_test)}** 条评论做了情感判断，"
+    f"其中 **{int(acc*len(y_test))}** 条判断正确，"
+    f"整体准确率为 **{acc:.1%}**。"
+)
+
+c1, c2, c3 = st.columns(3)
+c1.metric("整体准确率", f"{acc:.1%}", help="系统判断对的比例，越高越好")
+c2.metric("好评识别率", f"{rec:.1%}", help="真实好评中，被正确识别出来的比例")
+c3.metric("判断可信度", f"{prec:.1%}", help="系统说是好评的，实际确实是好评的比例")
+
+st.progress(min(acc, 1.0), text=f"准确率 {acc:.1%}")
+
+# 可视化：好评 vs 差评 的预测命中情况
+from collections import Counter
+real_pos = int((y_test == 1).sum())
+real_neg = int((y_test == 0).sum())
+correct_pos = int(((y_test == 1) & (y_pred == 1)).sum())
+correct_neg = int(((y_test == 0) & (y_pred == 0)).sum())
+
+labels = ['好评', '差评']
+real_counts = [real_pos, real_neg]
+correct_counts = [correct_pos, correct_neg]
+wrong_counts = [real_pos - correct_pos, real_neg - correct_neg]
+
+x = np.arange(len(labels))
+w = 0.38
+fig1, ax1 = plt.subplots(figsize=(5.5, 3))
+b1 = ax1.bar(x - w/2, correct_counts, w, label='判断正确', color='#FF6B35')
+b2 = ax1.bar(x + w/2, wrong_counts, w, label='判断错误', color='#FFD9C2')
+ax1.set_xticks(x)
+ax1.set_xticklabels(labels, fontsize=10)
+ax1.set_ylabel('评论条数', fontsize=9)
+ax1.set_title('好评 / 差评 判断结果', fontsize=11)
+ax1.legend(fontsize=9)
+for bars in (b1, b2):
+    for b in bars:
+        h = b.get_height()
+        ax1.annotate(f'{int(h)}', (b.get_x()+b.get_width()/2, h),
+                     ha='center', va='bottom', fontsize=8)
+plt.tight_layout()
+st.pyplot(fig1)
+
+with st.expander("🔍 查看详细分类报告（技术指标）"):
     st.code(report)
-with col_img:
-    cm = confusion_matrix(y_test, y_pred)
-    fig1, ax1 = plt.subplots(figsize=(3, 2.2))
-    sns.heatmap(cm, annot=True, fmt='d', cmap='Oranges',
-                xticklabels=['差评','好评'], yticklabels=['差评','好评'], ax=ax1)
-    ax1.set_title('情感分类混淆矩阵', fontsize=9)
-    ax1.set_ylabel('真实标签', fontsize=8)
-    ax1.set_xlabel('预测标签', fontsize=8)
-    plt.tight_layout()
-    st.pyplot(fig1)
+    st.caption(
+        "precision（精确率）：系统判为好评的里有多少是真好评；"
+        "recall（召回率）：真实好评里有多少被系统找出来；"
+        "f1-score：两者的综合分。"
+    )
 
 # ========== 5. 优缺点抽取 ==========
 st.header("二、优缺点抽取")
